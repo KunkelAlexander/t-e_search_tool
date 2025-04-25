@@ -11,7 +11,7 @@ FAISS_TOP_K          = 5                         # Number of top results to retr
 SEARCH_RESULT_K      = 5
 
 # Streamlit App
-LOGO_PATH = "frontend/assets/logo.png"     # Path to your company logo
+LOGO_PATH = "assets/logo.png"     # Path to your company logo
 APP_TITLE = "Internal Knowledge Database"  # Title for the Streamlit app
 
 # Other Settings

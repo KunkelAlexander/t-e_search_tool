@@ -1,20 +1,18 @@
 import streamlit as st
+import search_faiss as search_faiss
 import time
-import backend.search_faiss as search_faiss
-import config
-import streamlit.components.v1 as components
 
 
 # Set page configuration
 st.set_page_config(
     page_title="AI Search",  # Title shown in the browser tab
-    #page_icon="frontend/assets/favicon.ico",                    # Emoji or path to a favicon file
+    page_icon="assets/favicon.ico",                    # Emoji or path to a favicon file
     layout="wide",                     # Other options: "centered"
     initial_sidebar_state="expanded"   # Options: "auto", "expanded", "collapsed"
 )
 
 # Sidebar with logo and dropdown
-st.sidebar.image("frontend/assets/logo.png", use_column_width=True)  # Update with your logo path
+st.sidebar.image("assets/logo.png", use_column_width=True)  # Update with your logo path
 
 
 # --- Session State Initialization ---
