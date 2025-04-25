@@ -5,3 +5,4 @@ chunks
 *.json
 *.html
 *.pyc
+*.index

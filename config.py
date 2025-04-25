@@ -2,9 +2,8 @@
 
 # Embedding Model
 EMBEDDING_MODEL      = "all-mpnet-base-v2"
-EMBEDDING_MODEL_PATH =  r"embeddings/20250601_all-mpnet-base-v2/"
+EMBEDDING_MODEL_PATH = r"embeddings/faiss_data.tar.gz"
 FAISS_INDEX_FILE     = r"faiss_index_l2.bin"
-
 METADATA_FILE        = r"metadata.json"          # File to store document metadata
 CHUNKS_FILE          = r"chunks"
 CHUNK_SIZE           = 500                       # Number of words per text chunk - This determines the context size vs granularity trade-off (I suggest testing between 100 to 1000)

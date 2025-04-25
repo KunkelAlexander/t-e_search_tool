@@ -5,7 +5,22 @@ from sentence_transformers import SentenceTransformer
 from datetime import datetime
 import faiss
 import config
+import tarfile
 
+def extract_and_load_faiss(archive_path, extract_dir="faiss_temp"):
+    print(f"Extracting {archive_path} to {extract_dir}...")
+
+    if not os.path.exists(extract_dir):
+        os.makedirs(extract_dir)
+
+    with tarfile.open(archive_path, "r:gz") as tar:
+        tar.extractall(path=extract_dir)
+
+    index_file = os.path.join(extract_dir, "faiss.index")
+    metadata_file = os.path.join(extract_dir, "metadata.json")
+    chunk_file = os.path.join(extract_dir, "chunks.json")
+
+    return load_faiss_index(index_file, metadata_file, chunk_file)
 
 # Load FAISS index, metadata, and chunks
 def load_faiss_index(index_file, metadata_file, chunk_file):
@@ -27,12 +42,7 @@ def load_faiss_index(index_file, metadata_file, chunk_file):
 # Initialize the FAISS index (build or load)
 def initialize_search_index():
     embedding_model = SentenceTransformer(config.EMBEDDING_MODEL)
-    directory  = config.EMBEDDING_MODEL_PATH
-    faiss_path = os.path.join(directory, config.FAISS_INDEX_FILE)
-    meta_path  = os.path.join(directory, config.METADATA_FILE)
-    chunk_path = os.path.join(directory, config.CHUNKS_FILE)
-
-    faiss_index, metadata_list, chunks = load_faiss_index(faiss_path, meta_path, chunk_path)
+    faiss_index, metadata_list, chunks = extract_and_load_faiss(config.EMBEDDING_MODEL_PATH)
 
     return faiss_index, embedding_model, chunks, metadata_list, "L2" != "L2"
 
