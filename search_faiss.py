@@ -6,7 +6,9 @@ from datetime import datetime
 import faiss
 import config
 import tarfile
+import streamlit as st
 
+@st.cache_resource(show_spinner="Loading search index and embedding model...")
 def extract_and_load_faiss(archive_path, extract_dir="faiss_temp"):
     print(f"Extracting {archive_path} to {extract_dir}...")
 

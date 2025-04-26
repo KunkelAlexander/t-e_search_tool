@@ -70,7 +70,6 @@ with st.sidebar.expander("Expert Settings"):
 
 # --- Index Initialization Logic ---
 def initialize_index():
-    st.sidebar.write("Loading semantic search index...")
     (
         st.session_state.faiss_index,
         st.session_state.embedding_model,
@@ -78,7 +77,6 @@ def initialize_index():
         st.session_state.metadata,
         st.session_state.normalise,
     ) = search_faiss.initialize_search_index()
-    st.sidebar.success("Semantic search index loaded!")
     st.session_state.initialized = True
 
 
