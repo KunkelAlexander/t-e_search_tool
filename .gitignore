@@ -1,7 +1,6 @@
 *.pdf
 *.bin
 chunks
-*.txt
 *.json
 *.html
 *.pyc

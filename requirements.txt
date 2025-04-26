@@ -1,0 +1,5 @@
+streamlit
+faiss
+sentence-transformers
+pandas
+requests
