@@ -5,3 +5,6 @@ chunks
 *.html
 *.pyc
 *.index
+faiss_temp
+hf_model_cache/
+hf_model_cache/models--sentence-transformers--all-mpnet-base-v2/

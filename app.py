@@ -1,6 +1,7 @@
 import streamlit as st
-import search_faiss as search_faiss
+import search as search
 import time
+from langchain.callbacks.streamlit import StreamlitCallbackHandler
 
 
 # Set page configuration
@@ -12,94 +13,35 @@ st.set_page_config(
 )
 
 # Sidebar with logo and dropdown
-st.sidebar.image("assets/logo.png", use_container_width=True)  # Update with your logo path
+st.sidebar.image("assets/logo.png", use_column_width=True)  # Update with your logo path
 
 
-# --- Session State Initialization ---
-if "initialized" not in st.session_state:
-    st.session_state.initialized = False  # Tracks if indices are initialized
-if "alpha" not in st.session_state:
-    st.session_state.alpha = 0.05
-if "chunks_before" not in st.session_state:
-    st.session_state.chunks_before = 0  # Default within range 0-3
-if "chunks_after" not in st.session_state:
-    st.session_state.chunks_after = 0  # Default within range 0-3
-if "max_snippet_length" not in st.session_state:
-    st.session_state.max_snippet_length = 500  # Default within range 200-2000
+# --- Default Session-State Values ---
+def _init_state(defaults: dict):
+    for key, val in defaults.items():
+        st.session_state.setdefault(key, val)
 
-# --- Filter Options for Publication Type ---
-publication_types = ['Briefing', 'Press Release', 'Unknown Type', 'Report', 'Letter',
-       'Opinion', 'News', 'Publication', 'Consultation response', 'Internal', 'Spreadsheet']
+_init_state({
+    "initialized": False,
+    "alpha": 0.05,
+    "max_snippet_length": 500,
+    "n_search_results": 5,
+    "OPENAI_API_KEY": None,
+})
 
-# Callback for Select All
-def select_all():
-    st.session_state.selected_types = publication_types
 
-# Callback for Clear All
-def clear_all():
-    st.session_state.selected_types = []
 
 with st.sidebar.expander("Expert Settings"):
-    # Buttons for Select All and Clear All
-    st.button("Select All", on_click=select_all)
+    st.slider("# Search Results", 5, 100, step=5, key="n_search_results")
+    st.slider("Date Decay Factor (alpha)", 0.0, 0.5, step=0.01, key="alpha")
+    st.slider("Max Snippet Length", 200, 2000, step=50, key="max_snippet_length")
 
-    st.button("Clear All", on_click=clear_all)
-
-    selected_types = st.multiselect(
-        "Filter by Publication Type:",
-        options=publication_types,
-        default=publication_types,
-        key="selected_types"
-    )
-
-
-    alpha = st.slider("Date Decay Factor (alpha)", min_value=0.0, max_value=0.5, step=0.01, value=0.05)
-
-
-    st.session_state.chunks_before = st.slider(
-        "Chunks Before", min_value=0, max_value=3, step=1, value=st.session_state.chunks_before
-    )
-
-    st.session_state.chunks_after = st.slider(
-        "Chunks After", min_value=0, max_value=3, step=1, value=st.session_state.chunks_after
-    )
-
-    st.session_state.max_snippet_length = st.slider(
-        "Max Snippet Length", min_value=200, max_value=2000, step=50, value=st.session_state.max_snippet_length
-    )
-
-# --- Index Initialization Logic ---
-def initialize_index():
-    (
-        st.session_state.faiss_index,
-        st.session_state.embedding_model,
-        st.session_state.all_chunks,
-        st.session_state.metadata,
-        st.session_state.normalise,
-    ) = search_faiss.initialize_search_index()
-    st.session_state.initialized = True
-
-
-# --- Trigger Index Initialization or Update ---
+# --- Initialize Search Index Once ---
 if not st.session_state.initialized:
-    # Initialize or Update Index
-    initialize_index()
+    db, embeddings = search.initialize_search_index()
+    st.session_state.update({"db": db, "embeddings": embeddings, "initialized": True})
 
 
-# --- Define Search Function ---
-search_function = lambda query: search_faiss.search_pdfs(
-    query,
-    st.session_state.faiss_index,
-    st.session_state.embedding_model,
-    st.session_state.all_chunks,
-    st.session_state.metadata,
-    st.session_state.normalise,
-    st.session_state.alpha,
-    st.session_state.selected_types,
-    st.session_state.chunks_before,
-    st.session_state.chunks_after,
-    st.session_state.max_snippet_length
-)
 
 def display_result(result):
     similarity_percentage = int(result["weighted_score"] * 100)  # Convert to percentage
@@ -123,29 +65,73 @@ def display_result(result):
 
 # --- Search Mode Implementation ---
 
-# --- Search Bar ---
-query = st.text_input("Enter your query:", placeholder="Type a sentence or keywords...")
+# --- Layout with Tabs ---
+tab_search, tab_chat = st.tabs(["Search", "Chat"])
 
-# --- Perform Search ---
-if query:
-    st.write(f"#### Results for: `{query}`")
+with tab_search:
+    # --- Search Bar ---
+    query = st.text_input("Enter your query:", placeholder="Type a sentence or keywords...")
 
-    # Start timing
-    start_time = time.time()
+    # --- Perform Search ---
+    if query:
+        st.write(f"#### Results for: `{query}`")
 
-    results = search_function(query)
+        # Start timing
+        start_time = time.time()
 
-    # End timing
-    end_time = time.time()
-    elapsed_time = end_time - start_time  # Calculate elapsed time
+        results = search.search_pdfs(
+            query,
+            st.session_state.db,
+            st.session_state.n_search_results,
+            st.session_state.alpha,
+            st.session_state.max_snippet_length,
+        )
 
-    print(f"🔍 Search completed in **{elapsed_time:.2f} seconds**")
+        # End timing
+        end_time = time.time()
+        elapsed_time = end_time - start_time  # Calculate elapsed time
 
-    if results:
-        for result in results:
-            display_result(result)
+        print(f"🔍 Search completed in **{elapsed_time:.2f} seconds**")
+
+        if results:
+            for result in results:
+                display_result(result)
+        else:
+            st.write("No results found.")
+
+
+with tab_chat:
+    if st.session_state.OPENAI_API_KEY is None:
+        key = st.text_input("🔑 Enter your OpenAI API key", type="password")
+        if key:
+            st.session_state.OPENAI_API_KEY = key
     else:
-        st.write("No results found.")
+        # React to user input
+        if prompt := st.chat_input("What is up?"):
+            # Display user message in chat message container
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            # now call your refactored RAG function inside the assistant bubble
+            with st.chat_message("assistant"):
+                # instantiate the callback _for_ this container
+                handler = StreamlitCallbackHandler(st.container())
+
+                # we pass in our handler but let this context manage all UI
+                response = search.chat_rag(
+                    prompt=prompt,
+                    db=st.session_state.db,
+                    k=st.session_state.n_search_results,
+                    alpha=st.session_state.alpha,
+                    max_snippet_length=st.session_state.max_snippet_length,
+                    callbacks=[handler],
+                    openai_api_key=st.session_state.OPENAI_API_KEY,
+                )
+
+                st.markdown(response.get('output', ''))
+
+
+
 
 # Footer
 st.sidebar.markdown("---")

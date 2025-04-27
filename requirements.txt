@@ -1,5 +1,3 @@
 streamlit
-faiss-cpu
-sentence-transformers
-pandas
-requests
+langchain
+chromadb

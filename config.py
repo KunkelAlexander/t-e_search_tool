@@ -1,11 +1,9 @@
 ### **`config.py`**
 
 # Embedding Model
-EMBEDDING_MODEL      = "all-mpnet-base-v2"
-EMBEDDING_MODEL_PATH = r"embeddings/faiss_data.tar.gz"
-FAISS_INDEX_FILE     = r"faiss_index_l2.bin"
-METADATA_FILE        = r"metadata.json"          # File to store document metadata
-CHUNKS_FILE          = r"chunks"
+EMBEDDING_MODEL      = "all-MiniLM-L6-v2"
+PERSIST_DIR          = "../t-and-e-webscraper/chroma_db"
+COLLECTION_NAME      = "pdf_collection"
 CHUNK_SIZE           = 500                       # Number of words per text chunk - This determines the context size vs granularity trade-off (I suggest testing between 100 to 1000)
 FAISS_TOP_K          = 5                         # Number of top results to retrieve
 SEARCH_RESULT_K      = 5
