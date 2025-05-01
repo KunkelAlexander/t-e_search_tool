@@ -2,7 +2,7 @@ import streamlit as st
 import search as search
 import time
 from langchain.callbacks.streamlit import StreamlitCallbackHandler
-
+from streamlit_float import *
 
 # Set page configuration
 st.set_page_config(
@@ -24,22 +24,38 @@ def _init_state(defaults: dict):
 _init_state({
     "initialized": False,
     "alpha": 0.05,
-    "max_snippet_length": 500,
-    "n_search_results": 5,
+    "max_snippet_length": 1500,
+    "n_search_results": 10,
     "OPENAI_API_KEY": None,
+    "chat_history": []
 })
 
+with st.sidebar:
+    key = st.text_input("🔑 Enter your OpenAI API key", type="password")
+    if key:
+        st.session_state.OPENAI_API_KEY = key
+        st.success("✅ API key saved!")
 
+    if st.button("🔄  Reset chat", type="primary"):
+            # wipe all state keys that keep the dialogue
+            for k in ("chat_history",):
+                if k in st.session_state:
+                    del st.session_state[k]
 
+            # optional: also clear embeddings / FAISS index, etc.
+            # for k in ("index", "embeddings", "mapping", "pages"):
+            #     st.session_state.pop(k, None)
+
+            st.experimental_rerun()       # full page refresh
 with st.sidebar.expander("Expert Settings"):
     st.slider("# Search Results", 5, 100, step=5, key="n_search_results")
     st.slider("Date Decay Factor (alpha)", 0.0, 0.5, step=0.01, key="alpha")
     st.slider("Max Snippet Length", 200, 2000, step=50, key="max_snippet_length")
 
 # --- Initialize Search Index Once ---
-if not st.session_state.initialized:
-    db, embeddings = search.initialize_search_index()
-    st.session_state.update({"db": db, "embeddings": embeddings, "initialized": True})
+if not st.session_state.initialized and st.session_state.OPENAI_API_KEY:
+    index, embeddings, mapping, pages = search.initialize_search_index()
+    st.session_state.update({"index": index, "embeddings": embeddings, "mapping": mapping, "pages": pages, "initialized": True})
 
 
 
@@ -65,8 +81,10 @@ def display_result(result):
 
 # --- Search Mode Implementation ---
 
+
 # --- Layout with Tabs ---
-tab_search, tab_chat = st.tabs(["Search", "Chat"])
+tab_search, tab_chat = st.tabs(["❓Search", "💬 Chat"])
+
 
 with tab_search:
     # --- Search Bar ---
@@ -81,10 +99,13 @@ with tab_search:
 
         results = search.search_pdfs(
             query,
-            st.session_state.db,
-            st.session_state.n_search_results,
-            st.session_state.alpha,
-            st.session_state.max_snippet_length,
+            st.session_state.index,
+            st.session_state.embeddings,
+            st.session_state.mapping,
+            st.session_state.pages,
+            k = st.session_state.n_search_results,
+            alpha = st.session_state.alpha,
+            max_snippet_length=st.session_state.max_snippet_length,
         )
 
         # End timing
@@ -99,37 +120,61 @@ with tab_search:
         else:
             st.write("No results found.")
 
+def add_message(role: str, content: str):
+    st.session_state.chat_history.append(
+        {"role": role, "content": content}
+    )
 
 with tab_chat:
-    if st.session_state.OPENAI_API_KEY is None:
-        key = st.text_input("🔑 Enter your OpenAI API key", type="password")
-        if key:
-            st.session_state.OPENAI_API_KEY = key
+    if not st.session_state.OPENAI_API_KEY:
+        st.markdown("🔑 Enter your OpenAI API key in the sidebar")
     else:
-        # React to user input
-        if prompt := st.chat_input("What is up?"):
-            # Display user message in chat message container
-            with st.chat_message("user"):
-                st.markdown(prompt)
+        # ── get user input ───────────────────────────────────────────
+        user_prompt = st.chat_input("Ask me anything about the documents …", key="chatbox")
 
-            # now call your refactored RAG function inside the assistant bubble
-            with st.chat_message("assistant"):
-                # instantiate the callback _for_ this container
-                handler = StreamlitCallbackHandler(st.container())
+        # ── 1) one container for every bubble ───────────────────────────
+        chat_container = st.container()
 
-                # we pass in our handler but let this context manage all UI
-                response = search.chat_rag(
-                    prompt=prompt,
-                    db=st.session_state.db,
-                    k=st.session_state.n_search_results,
-                    alpha=st.session_state.alpha,
-                    max_snippet_length=st.session_state.max_snippet_length,
-                    callbacks=[handler],
-                    openai_api_key=st.session_state.OPENAI_API_KEY,
+
+        with chat_container:
+            # ── 1) render the whole conversation so far (oldest → newest) ──
+            for msg in st.session_state.chat_history:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+
+        if user_prompt:
+            # 1 ▸ show it & store
+            with chat_container:
+                with st.chat_message("user"):
+                    st.markdown(user_prompt)
+            add_message("user", user_prompt)
+
+            # 2 ▸ assistant bubble (will be streamed)
+            with chat_container.chat_message("assistant"):
+
+                # 2·1 build the context you want to send to the LLM
+                #     (you might clip to the last N turns)
+                history_for_llm = st.session_state.chat_history[-10:]
+
+                # 2·2 fire your RAG wrapper; it returns a generator of chunks
+                stream = search.chat_rag(
+                    user_prompt,
+                    history      = history_for_llm,                 # NEW
+                    faiss_index  = st.session_state.index,
+                    embeddings   = st.session_state.embeddings,
+                    mapping_df   = st.session_state.mapping,
+                    pages_df     = st.session_state.pages,
+                    k            = st.session_state.n_search_results,
+                    alpha        = st.session_state.alpha,
+                    max_snippet_length = st.session_state.max_snippet_length,
+                    openai_api_key     = st.session_state.OPENAI_API_KEY,
                 )
 
-                st.markdown(response.get('output', ''))
+                # 2·3 stream tokens into the chat bubble
+                assistant_text = st.write_stream(stream) if stream else ""
 
+            # 3 ▸ persist the assistant reply
+            add_message("assistant", assistant_text)
 
 
 

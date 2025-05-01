@@ -1,174 +1,360 @@
-import os
-import numpy as np
+# ── 🔧 NEW DEPENDENCIES ────────────────────────────────────────────
+# pip install -qU faiss-cpu pyarrow pandas langchain sentence-transformers
+
+import os, faiss, numpy as np, pandas as pd
 from datetime import datetime
 import streamlit as st
 import config
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import Chroma
-from langchain_openai import ChatOpenAI
-from langchain.schema import SystemMessage, HumanMessage
-from langchain.agents import initialize_agent, Tool
+from config import INDEX_PATH, MAP_PATH, PAGES_PATH, HF_CACHE_DIR                            # your own config.py
+from langchain.embeddings import (
+    HuggingFaceEmbeddings, OpenAIEmbeddings
+)
+from langchain.callbacks.base import BaseCallbackHandler
+import json
 
-# Set a local model cache directory inside your app
-HF_CACHE_DIR = "./hf_model_cache"
-os.environ["TRANSFORMERS_CACHE"] = HF_CACHE_DIR
-os.environ["SENTENCE_TRANSFORMERS_HOME"] = HF_CACHE_DIR
-
-@st.cache_resource(show_spinner="Loading Chroma vectorstore and embedding model...")
-def initialize_search_index():
+# ╭──────────────────────────────────────────────────────────────╮
+# │  1. initialise FAISS index + dataframes (cached)            │
+# ╰──────────────────────────────────────────────────────────────╯
+@st.cache_resource(show_spinner="Loading FAISS index & embeddings…")
+def initialize_search_index(openai_api_key: str | None = None):
     """
-    Load the Chroma vectorstore and the embedding model.
-    Returns:
-        db: Chroma vectorstore instance
-        embeddings: HuggingFaceEmbeddings instance
+    Returns
+    -------
+    index     : faiss.Index
+    embeddings: Embedding model (HF or OpenAI)
+    mapping   : pd.DataFrame  (index on vector_id)
+    pages     : pd.DataFrame  (index on document ID)
     """
-    # Initialize embeddings
-    embeddings = HuggingFaceEmbeddings(model_name=config.EMBEDDING_MODEL)
-    # Connect to the persistent Chroma DB
-    db = Chroma(
-        persist_directory=config.PERSIST_DIR,
-        collection_name=config.COLLECTION_NAME,
-        embedding_function=embeddings
-    )
-    return db, embeddings
+    # choose embedding backend
+    if "text-embedding" in config.EMBEDDING_MODEL:
+        embeddings = OpenAIEmbeddings(
+            model=config.EMBEDDING_MODEL,
+            openai_api_key=openai_api_key
+        )
+    else:
+        embeddings = HuggingFaceEmbeddings(model_name=config.EMBEDDING_MODEL)
+
+    # load artefacts
+    index   = faiss.read_index(INDEX_PATH)
+    mapping = pd.read_parquet(MAP_PATH).set_index("vector_id")
+    pages   = pd.read_parquet(PAGES_PATH).set_index("ID")
+
+    return index, embeddings, mapping, pages
 
 
+from collections import defaultdict
+from operator   import itemgetter
 
+def merge_snippets(
+        hits: list[dict],
+        *,
+        max_snippets_per_doc: int = 3,
+        joiner: str = " … "
+    ) -> list[dict]:
+    """
+    Parameters
+    ----------
+    hits  : list of dicts – output of `search_pdfs`
+    max_snippets_per_doc : keep at most this many snippets per PDF
+    joiner               : string inserted between snippets
+
+    Returns
+    -------
+    merged : list[dict]  – one entry per document, ordered by best score
+    """
+
+    # bucket all snippets by file (or any unique doc key you prefer)
+    buckets: dict[str, list[dict]] = defaultdict(list)
+    for h in hits:
+        buckets[h["filename"]].append(h)
+
+    merged = []
+    for fname, lst in buckets.items():
+        # sort snippets inside one doc: best weighted_score first
+        lst.sort(key=itemgetter("start_char"), reverse=True)
+
+        # concatenate up to max_snippets_per_doc unique snippets
+        snippets_combined = joiner.join(
+            s["snippet"] for s in lst[:max_snippets_per_doc]
+        )
+
+        # start from the best‐scoring dict, overwrite the snippet & score fields
+        best = lst[0].copy()
+        best["snippet"] = snippets_combined
+        # (optional) you may want an aggregate score – e.g. max or mean
+        best["combined_score"] = best["weighted_score"]      # keep the max
+
+        merged.append(best)
+
+    # order the final list by the best score per document
+    merged.sort(key=itemgetter("combined_score"), reverse=True)
+    return merged
+
+# ╭──────────────────────────────────────────────────────────────╮
+# │  2.  semantic search with optional date-decay weighting      │
+# ╰──────────────────────────────────────────────────────────────╯
 def search_pdfs(
-    query: str,
-    db: Chroma,
-    k: int = config.SEARCH_RESULT_K,
-    alpha: float = 0.0,
-    max_snippet_length: int = 500
-) -> list[dict]:
+        query: str,
+        faiss_index,
+        embeddings,
+        mapping_df: pd.DataFrame,
+        pages_df: pd.DataFrame,
+        *,
+        k: int = config.SEARCH_RESULT_K,
+        alpha: float = 0.0,
+        max_snippet_length: int = 500
+    ) -> list[dict]:
     """
-    Perform a semantic search using Chroma, with optional date-based weighting and metadata filtering.
-
-    Parameters:
-        query: the user query string
-        db: the Chroma vectorstore
-        embeddings: the embedding model (for embedding the query)
-        k: number of results to return
-        alpha: decay factor for date weighting (0 = no decay)
-        publication_types: list of metadata values to filter on 'publication_type'
-        max_snippet_length: truncate snippet to this length
-
-    Returns:
-        List of result dicts containing metadata and snippets, sorted by weighted score.
+    Parameters
+    ----------
+    query  : str    – user search string
+    faiss_index,
+    embeddings,
+    mapping_df,
+    pages_df : objects returned by `initialize_search_index`
+    k      : int    – how many results
+    alpha  : float  – 0 → ignore recency, >0 → exponential decay / year
     """
-    # Get top-k docs and FAISS-style distances (here, cosine distance)
-    docs_and_scores = db.similarity_search_with_score(query, k=k)
+
+    # ➊ embed & search
+    q_vec = embeddings.embed_query(query)
+    D, I  = faiss_index.search(np.array([q_vec]), k)            # D = L2 distances
 
     now = datetime.now()
     results = []
 
-    for doc, distance in docs_and_scores:
-        meta = doc.metadata
+    for dist, vec_id in zip(D[0], I[0]):
+        # mapping row gives us doc_id and offsets
+        meta_row = mapping_df.loc[vec_id]
+        doc_row  = pages_df.loc[meta_row["doc_id"]]   # full metadata
 
-        # Compute date decay weight
-        date_weight = 1.0
-        pub_date_str = meta.get("publication_date")
+
+        # rebuild chunk text
+        text = doc_row["fulltext"]
+        snippet_raw = text[int(meta_row["start_char"]) : int(meta_row["end_char"])]
+        snippet     = snippet_raw.replace("\n", " ")[:max_snippet_length]
+
+        # date weighting
+        pub_date_str = doc_row.get("Publication Date")
+        date_weight  = 1.0
+        pub_date     = None                              # will hold the parsed dt
+
         if pub_date_str:
-            try:
-                pub_date = datetime.fromisoformat(pub_date_str)
-            except ValueError:
+            # ----  robust parsing  --------------------------------------------------
+            for fmt in (
+                "%Y-%m-%d",                       # 2025-05-01
+                "%Y-%m-%dT%H:%M:%S",              # ISO without TZ
+                "%B %d, %Y, %I:%M:%S %p",         # Sep 16, 2024, 12:00:00 AM
+                "%B %d, %Y",
+                "%b %d, %Y, %I:%M:%S %p"
+            ):
                 try:
-                    pub_date = datetime.strptime(pub_date_str, "%B %d, %Y")
-                except Exception:
-                    pub_date = None
+                    pub_date = datetime.strptime(pub_date_str, fmt)
+                    break
+                except ValueError:
+                    continue
             if pub_date:
-                days_diff = (now - pub_date).days
+                days_diff   = (now - pub_date).days
                 date_weight = np.exp(-alpha * days_diff / 365)
 
-        # Convert distance to similarity score
-        similarity_score = 1 / (1 + distance)
-        weighted_score = similarity_score * date_weight
-
-        # Build snippet
-        snippet = doc.page_content.replace("\n", " ")
-        snippet = snippet[:max_snippet_length]
+                # **clean representation without the clock**
+                pub_date_clean = pub_date.strftime("%Y-%m-%d")   # e.g. "2024-09-16"
+            else:
+                pub_date_clean = pub_date_str                    # fallback
+        else:
+            pub_date_clean = None
+        similarity   = 1 / (1 + dist)      # convert L2 distance → similarity
+        weighted     = similarity * date_weight
 
         results.append({
-            "title": meta.get("title"),
-            "filename": meta.get("pdf_url", "").split("/")[-1],
-            "summary": meta.get("summary"),
-            "publication_date": meta.get("publication_date"),
-            "publication_type": meta.get("publication_type"),
-            "url": meta.get("article_url"),
-            "pdf_url": meta.get("pdf_url"),
-            "snippet": snippet,
-            "score": similarity_score,
-            "date_weight": date_weight,
-            "weighted_score": weighted_score,
+            "title"            : doc_row.get("Title"),
+            "filename"         : doc_row.get("PDF Filename"),
+            "summary"          : doc_row.get("Summary"),
+            "publication_date" : pub_date_clean,
+            "publication_type" : doc_row.get("Publication Type"),
+            "url"              : doc_row.get("Article URL"),
+            "pdf_url"          : doc_row.get("PDF URL"),
+            "snippet"          : snippet,
+            "score"            : float(similarity),
+            "date_weight"      : float(date_weight),
+            "weighted_score"   : float(weighted),
+            "start_char"       : int(meta_row["start_char"])
         })
 
-    # Sort by weighted_score descending and take top-k
-    results = sorted(results, key=lambda x: x["weighted_score"], reverse=True)[:k]
-    return results
+    # sort & trim
+    results.sort(key=lambda x: x["weighted_score"], reverse=True)
+    return merge_snippets(results, max_snippets_per_doc=10)
 
+
+
+from typing import Generator, Iterable, List
+from langchain.chat_models import ChatOpenAI
+from langchain.schema import HumanMessage, SystemMessage
+from langchain.callbacks.base import BaseCallbackHandler
+
+# ────────────────────────────────────────────────
+# A minimal callback that streams tokens outward
+# ────────────────────────────────────────────────
+class StreamCallback(BaseCallbackHandler):
+    """Collects tokens and makes them iterable."""
+    def __init__(self):
+        self._queue: List[str] = []
+
+    # Called every time a new token arrives
+    def on_llm_new_token(self, token: str, **kwargs):
+        self._queue.append(token)
+
+    # Give Streamlit an iterable interface
+    def __iter__(self) -> Iterable[str]:
+        while self._queue:
+            yield self._queue.pop(0)
+
+from typing import Generator, List, Tuple
+from langchain.schema import SystemMessage, HumanMessage, AIMessage
+from langchain.chat_models import ChatOpenAI
+
+def decide_rag(
+    prompt: str,
+    history: List[dict],
+    max_query_tokens: int = 32,
+    openai_api_key: str | None = None,
+) -> Tuple[bool, str]:
+    """
+    Return (use_rag, search_query).  Uses a cheap, non-streaming call.
+    The model MUST answer with a JSON dict: {"use_rag": bool, "query": str}
+    """
+
+    sys = SystemMessage(
+        content=(
+            "You are a routing controller. "
+            "Analyse the user's latest message **and** their recent conversation. "
+            "If the assistant can answer without consulting their briefings and report, "
+            "return: {\"use_rag\": false, \"query\": \"\"}. "
+            "Otherwise set use_rag true and craft an effective search query of "
+            f"≤ {max_query_tokens} tokens that would retrieve the needed docs from a RAG with Transport & Environment's publications. "
+            "Only output the JSON, nothing else."
+        )
+    )
+
+    # Keep just the last few turns to save tokens
+    latest_turns = history[-6:]  # tweak as needed
+
+    hist_msgs = [
+        (HumanMessage if m["role"] == "user" else SystemMessage)(content=m["content"])
+        for m in latest_turns
+    ]
+
+    messages = hist_msgs + [sys, HumanMessage(content=prompt)]
+
+    router = ChatOpenAI(
+        model_name="gpt-4o-mini",   # cheap & fast
+        temperature=0.0,
+        openai_api_key=openai_api_key,
+    )
+
+    answer = router.invoke(messages).content
+    print("Assistant answer: ", answer)
+    try:
+        j = json.loads(answer)
+        return bool(j.get("use_rag")), j.get("query", "")
+    except Exception:
+        # fail safe: default to RAG with the raw prompt
+        return True, prompt
+
+# ───────────────────────────────────────────────────────────────
+# 1 ▸ main public function
+# ───────────────────────────────────────────────────────────────
 def chat_rag(
     prompt: str,
-    db,
-    k: int = config.SEARCH_RESULT_K,
+    history: List[dict],
+    *,
+    faiss_index,
+    embeddings,
+    mapping_df: pd.DataFrame,
+    pages_df: pd.DataFrame,
+    k: int = 5,
     alpha: float = 0.0,
     max_snippet_length: int = 500,
     callbacks: list | None = None,
     openai_api_key: str | None = None,
-) -> str:
+) -> Generator[str, None, None]:
     """
-    Performs RAG via a zero-shot agent that invokes `search_pdfs` as a tool only when needed.
-    Keeps the same interface signature for modularity.
-    Returns the final answer with inline citations.
+    Streaming generator:
+      • decides first whether to call RAG
+      • if yes, builds a search query from conversation + prompt
+      • streams the answer, adding a Sources block when RAG was used
     """
-    # Define a local tool that wraps your existing search_pdfs, capturing db and retrieval parameters
-    def _search_pdfs_tool(query: str) -> str:
-        docs = search_pdfs(query, db, k=k, alpha=alpha, max_snippet_length=max_snippet_length)
-        # Format results as numbered citation snippets
-        return "\n".join(
-            f"[{i+1}] {d['title']} ({d['publication_date']}): {d['snippet']}"
-            for i, d in enumerate(docs)
+
+    # --- 1) router ----------------------------------------------------------
+    use_rag, search_query = decide_rag(prompt, history, openai_api_key=openai_api_key)
+
+    # --- 2) retrieval if needed ---------------------------------------------
+    if use_rag:
+        docs = search_pdfs(
+            search_query,
+            faiss_index,
+            embeddings,
+            mapping_df,
+            pages_df,
+            k=k,
+            alpha=alpha,
+            max_snippet_length=max_snippet_length,
         )
 
-    search_tool = Tool.from_function(
-        func=_search_pdfs_tool,
-        name="search_pdfs",
-        description="Search the PDF corpus and return top-k relevant snippets numbered for citation."
-    )
+        context_blocks = []
+        for idx, d in enumerate(docs, start=1):
+            title, url = d.get("title", "Untitled"), d.get("url", "#")
+            snippet = d.get("snippet", "").replace("\n", " ").strip()
+            context_blocks.append(f"[{idx}] {title} — {url}\n{snippet}")
+        context = "\n\n".join(context_blocks)
 
-    # Add a no-op 'none' tool to handle explicit 'Action: None' responses
-    none_tool = Tool.from_function(
-        func=lambda _: "",
-        name="none",
-        description="No action. Use when no retrieval is needed."
-    )
+        sys_ctx = SystemMessage(
+            content=(
+                "You are a meticulous research assistant for Transport & Environment. "
+                "When you quote or paraphrase, add bracketed numbers like [1]."
+            )
+        )
+        sys_docs = SystemMessage(content=f"Context documents:\n\n{context}")
+    else:
+        docs = []          # empty – will suppress the Sources block later
+        sys_ctx = SystemMessage(
+            content="You are Transport & Environment’s helpful assistant."
+        )
+        # no context documents
+        sys_docs = None
 
-    # Instantiate the LLM, updating callbacks and API key
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
+    # --- 3) build chat messages ---------------------------------------------
+    hist_msgs = [
+        (HumanMessage if m["role"] == "user" else AIMessage)(content=m["content"])
+        for m in history
+    ]
+
+    seed_messages = [sys_ctx] + ([sys_docs] if sys_docs else []) + [
+        HumanMessage(content=prompt)
+    ]
+    messages = hist_msgs + seed_messages
+
+    # --- 4) answer -----------------------------------------------------------
+    model = ChatOpenAI(
+        model_name="gpt-4o-mini",
         streaming=True,
-        temperature=0,
-        callbacks=callbacks or [],
+        temperature=0.0,
+        callbacks=callbacks,
         openai_api_key=openai_api_key,
     )
 
-    # Initialize a zero-shot agent that decides when to call the tool
-    agent = initialize_agent(
-        tools=[search_tool, none_tool],  # include the none tool to catch 'Action: None'
-        llm=llm,
-        agent="zero-shot-react-description",
-        verbose=False,
-    )
+    for token in model.stream(messages):
+        yield token
 
-    # System prompt to enforce inline citation formatting
-    citation_prompt = SystemMessage(content=(
-        "You are a research assistant. Whenever you state a fact drawn from our tools, "
-        "append a citation number in brackets like '[1]'. At the end, list each source with its number."
-    ))
-
-    # Run the agent in streaming mode and return the answer text
-    answer = agent.invoke([
-        citation_prompt,
-        HumanMessage(content=prompt)
-    ])
-
-    return answer
+    # --- 5) add sources if RAG was used -------------------------------------
+    if use_rag and docs:
+        yield "\n\n---\n\n**Sources:**\n\n"
+        for idx, result in enumerate(docs, start=1):
+            md = (
+                f"**{idx}. [{result.get('title','Untitled')}]({result.get('url','#')})**  \n"
+                f"*{result.get('publication_type','Unknown')} – "
+                f"{result.get('publication_date','')} – "
+                f"{round(result['score']*100,1)}% match*  \n"
+                f"> {result.get('snippet','').strip()}  \n\n"
+            )
+            yield md
