@@ -1,109 +1,123 @@
 # Internal Knowledge Database
 
-This project is designed to scrape, process, and search through a collection of publications, providing a user-friendly internal knowledge database. The application integrates a FAISS-powered search index, and a Streamlit frontend for a modern and efficient user experience.
+A lightweight **research‑assistant platform** that lets you _index_ and _chat_ with large collections of PDF publications built with the help of LLMs.
+It couples a **FAISS** vector store with a **Streamlit** UI that offers both RAG-powered search and an AI‑powered chat interface.
 
-![](figures/user_experience.gif)
+<p align="center">
+  <img src="figures/user_experience.gif" alt="Demo animation" width="700">
+</p>
 
-## Features
+---
 
-- **Embedding Generation**: Use state-of-the-art models to create vector embeddings for semantic search.
-- **FAISS Indexing**: Efficient retrieval of relevant documents using FAISS.
-- **Streamlit Frontend**: A clean, interactive UI for searching publications, complete with clickable results.
-- **Persistent Storage**: Save scraped data, embeddings, and metadata for reuse.
+## ✨ Key Features
 
-## Project Structure
+| Area | Highlights |
+|------|------------|
+| **Semantic Search** | • Sentence‑Transformer or OpenAI embeddings<br>• Optional exponential **date‑decay** weighting so fresh material floats to the top |
+| **Storage** | • FAISS HNSW index for millisecond retrieval<br>• All vectors + metadata **persisted** on disk |
+| **Streamlit Front‑End** | • Responsive two‑tab layout – **Search** & **Chat**<br>• Clickable results with similarity colouring<br>• Floating chat bar, expert settings sliders |
+| **Retrieval‑Augmented Chat (RAG)** | • Router decides when to query the corpus<br>• Sources block with inline `[1]` citations |
+| **Extensibility** | Simple, modular Python; swap embedding models, adjust ranking, plug‑in new data loaders |
 
-```plaintext
-project_name/
-│
-├── scraping/               # Tools for web scraping
-│   ├── fetch_html.py       # Script to fetch and save HTML
-│   ├── scrape_publications.py  # Main scraping logic
-│   └── utils.py            # Helper functions (e.g., logging, sanitization)
-│
-├── data/                   # Storage for raw and processed data
-│   ├── publications/       # PDF files or other raw data
-│   ├── fetched_html/       # HTML files saved during scraping
-│   ├── faiss_index/        # Stored FAISS index
-│   └── metadata.json       # Metadata file for documents
-│
-├── data/             # Code for embedding generation and FAISS indexing
-│   ├── generate_embeddings.py   # Script to generate embeddings
-│   ├── faiss_index_utils.py     # Functions to save/load FAISS index
-│   └── model_utils.py      # Wrapper for embedding model (e.g., SentenceTransformer)
-│
-├── frontend/               # Streamlit or other frontend code
-│   ├── app.py              # Main Streamlit application
-│   ├── templates/          # Optional, for custom HTML templates
-│   ├── static/             # Images, CSS, or JS files for the frontend
-│   └── assets/             # Company logos or branding materials
-│
-├── requirements.txt        # Python dependencies
-├── README.md               # Project documentation
-├── .gitignore              # Files to ignore in version control
-└── config.py               # Centralized configuration settings
+---
+
+## 🛠 Installation
+
+### 1. Prerequisites
+* Python ≥ 3.8
+* `pip` package manager
+* (optional) `virtualenv` or `conda`
+
+### 2. Clone & set up
+```bash
+git clone https://github.com/your-repo/internal-knowledge-database.git
+cd internal-knowledge-database
+python -m venv venv                 # optional but recommended
+source venv/bin/activate            # Windows: venv\Scripts\activate
 ```
 
-## Installation
-### Prerequisites
+### 3. Install dependencies
+```bash
+pip install -r requirements.txt
+# NEW: core libs if you maintain your own requirements file
+pip install faiss-cpu streamlit streamlit langchain sentence-transformers pyarrow
+```
 
-- Python 3.8 or later
-- Pip (Python package manager)
+### 4. Configure
+Edit **`config.py`** (paths, model names, index size, etc.).
+At runtime, supply your **OpenAI key** via:
 
-## Setup
+* the Streamlit sidebar input
 
-### Clone the repository:
+---
 
-- `git clone https://github.com/your-repo/internal-knowledge-database.git`
-- `cd internal-knowledge-database`
+## 🚀 Usage
 
-### Set up a virtual environment (optional but recommended):
+### 1. Build / update the index
+```bash
+build_index.ipynb   # scrapes PDFs → embeddings → FAISS
+```
+Adjust model, chunk size and filters in `config.py`.
 
-- `python -m venv venv`
-- `source venv/bin/activate  # On Windows: venv\Scripts\activate`
+### 2. Launch the UI
+```bash
+streamlit run frontend/app.py
+```
 
-### Install dependencies:
+### 3. Search
+*Switch to the **Search** tab, type a query.*
+Results show publication type, date and a colour‑coded match score.
 
-- `pip install -r requirements.txt`
+### 4. Chat
+Ask conversational questions in the **Chat** tab.
+The assistant will cite snippets (`[1]`) and list full sources below its answer.
 
-### Configure the application:
+---
 
-- Update `config.py` with relevant paths and settings.
+## ⚙ Expert Settings (in the sidebar)
 
-### Run the Streamlit frontend:
+| Control | Effect |
+|---------|--------|
+| **# Search Results** | top‑*k* candidates returned from FAISS |
+| **Date Decay α** | how strongly older docs are down‑weighted |
+| **Max Snippet Length** | truncate long excerpts for brevity |
 
-- `streamlit run frontend/app.py`
+---
 
-## Usage
+## 🧑‍💻 Project Structure
 
-### Generate Embeddings:
-- Run the `generate_embeddings.py` script to create embeddings and build a FAISS index.
-- Update embedding model, chunk size, etc. in `config.py`
+```
+app.py              main entry point
+search.py           implement rag retrieval and chat using langchain
+build_index.ipynb   create faiss vector database and read pdfs
+embeddings/         cached artefacts (index, parquet mapping,…)
+figures/            screenshots / GIFs
+```
 
-### Search Through Publications:
-- Access the Streamlit app and enter a query in the search bar to retrieve results.
+---
 
-![](figures/search.png)
+## ✅ Running Tests
+```bash
+pytest -v tests/
+```
 
-### Chat with Publications:
-- Access the Streamlit app and enter a query in the chat bar to have a chat with them.
+---
 
-![](figures/chat.png)
+## 🌱 Roadmap
 
-## Configuration
+* Hybrid semantic + keyword search
+* Faceted filters (author, year, tag) in the UI
+* Scheduled crawler to auto‑ingest new publications
+* Multi‑language support
 
-- The application is configured via the `config.py` file. Update the paths and model names as needed.
+---
 
-## Tests
+## 📝 License
+[MIT](LICENSE)
 
-- Test application by running test scripts in test folder using `python -m pytest -v .\tests\PLACEHOLDER.py`
+---
 
-## Future Enhancements
-
-- Add support for hybrid search (semantic + keyword-based).
-- Improve the frontend with advanced filtering options.
-- Automate periodic updates for new publications.
-
-## License
-
-- This project is licensed under the MIT License. See the LICENSE file for details.
+## 🔖 Disclaimer
+This is a personal side‑project by **Alexander Kunkel**.
+It is **not** an official product of **Transport & Environment** and reflects only the author’s views.
+Use at your own discretion.

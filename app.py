@@ -16,6 +16,25 @@ st.set_page_config(
 st.sidebar.image("assets/logo.png", use_column_width=True)  # Update with your logo path
 
 
+# ── 0) CSS for the floating bar (same as before) ────────────────
+st.markdown(
+    """
+    <style>
+      /* floating footer */
+      .stChatInputContainer {
+          position: fixed !important;
+          left: 0; right: 0; bottom: 0;
+          z-index: 100;
+          border-top: 1px solid #eee;
+          background: white;
+      }
+      /* make room so bubbles aren't hidden */
+      .block-container { padding-bottom: 6rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # --- Default Session-State Values ---
 def _init_state(defaults: dict):
     for key, val in defaults.items():
@@ -27,33 +46,44 @@ _init_state({
     "max_snippet_length": 1500,
     "n_search_results": 10,
     "OPENAI_API_KEY": None,
+    "selected_model": "gpt-4o-mini",
     "chat_history": []
 })
 
-with st.sidebar:
-    key = st.text_input("🔑 Enter your OpenAI API key", type="password")
-    if key:
-        st.session_state.OPENAI_API_KEY = key
-        st.success("✅ API key saved!")
+with st.sidebar.expander("Settings"):
 
-    if st.button("🔄  Reset chat", type="primary"):
-            # wipe all state keys that keep the dialogue
-            for k in ("chat_history",):
-                if k in st.session_state:
-                    del st.session_state[k]
+    if st.button("🔄  Reset chat", use_container_width=True):
+            st.session_state.chat_history = []
 
             # optional: also clear embeddings / FAISS index, etc.
             # for k in ("index", "embeddings", "mapping", "pages"):
             #     st.session_state.pop(k, None)
 
-            st.experimental_rerun()       # full page refresh
-with st.sidebar.expander("Expert Settings"):
+
+    key = st.text_input("🔑 Enter your OpenAI API key", type="password")
+    if key:
+        st.session_state.OPENAI_API_KEY = key
+        st.success("✅ API key saved!")
     st.slider("# Search Results", 5, 100, step=5, key="n_search_results")
-    st.slider("Date Decay Factor (alpha)", 0.0, 0.5, step=0.01, key="alpha")
-    st.slider("Max Snippet Length", 200, 2000, step=50, key="max_snippet_length")
+
+    # Dropdown for selecting OpenAI model
+    model_options = [
+        "gpt-4o-mini",         #
+        "o4-mini",             #
+        "gpt-4.1-nano",        # 📊 Optimized for math, coding, and visual tasks
+        "gpt-4.1-mini",        # 🧠 Efficient STEM-focused reasoning
+        "gpt-4.1",             # 🧮 Advanced reasoning with visual input
+        "o1-mini",             #
+        "o3-mini",             #
+        "o3 (expensive)",  #
+    ]
+    st.selectbox("🤖 Choose OpenAI model", model_options, key="selected_model")
+
+    st.slider("Relevancy of more recent results", 0.0, 0.5, value = 0.01, step=0.01, key="alpha")
+    st.slider("Length of snippets", 200, 2000, value=1000, step=50, key="max_snippet_length")
 
 # --- Initialize Search Index Once ---
-if not st.session_state.initialized and st.session_state.OPENAI_API_KEY:
+if not st.session_state.initialized:
     index, embeddings, mapping, pages = search.initialize_search_index()
     st.session_state.update({"index": index, "embeddings": embeddings, "mapping": mapping, "pages": pages, "initialized": True})
 
@@ -67,7 +97,7 @@ def display_result(result):
 
     html_content = f"""
     <div style="border: 1px solid #ccc; padding: 10px; border-radius: 5px; margin-bottom: 10px; font-family: Arial, sans-serif;">
-            <p style="color: #006621; font-size: 12px; margin: 0;">{result['publication_type']} - {result['publication_date']} - {similarity_percentage}% match </p>
+            <p style="color: #006621; font-size: 12px; margin: 0;">{result['publication_type']} - {result['publication_date']} - {similarity_percentage}% match - <a href="{result['pdf_url']}" target="_blank"> {result['pdf_url']} </a> </p>
                 <h3 style="margin: 0; font-size: 18px;">
                     <a href="{result['url']}" target="_blank" style="color: #1a0dab; text-decoration: none;">
                         {result['title']}
@@ -103,9 +133,9 @@ with tab_search:
             st.session_state.embeddings,
             st.session_state.mapping,
             st.session_state.pages,
-            k = st.session_state.n_search_results,
-            alpha = st.session_state.alpha,
-            max_snippet_length=st.session_state.max_snippet_length,
+            k                  = st.session_state.n_search_results,
+            alpha              = st.session_state.alpha,
+            max_snippet_length = st.session_state.max_snippet_length
         )
 
         # End timing
@@ -127,7 +157,11 @@ def add_message(role: str, content: str):
 
 with tab_chat:
     if not st.session_state.OPENAI_API_KEY:
-        st.markdown("🔑 Enter your OpenAI API key in the sidebar")
+        key = st.text_input("🔑 Enter your OpenAI API key", type="password", key="password_input_2")
+        if key:
+            st.session_state.OPENAI_API_KEY = key
+            st.success("✅ API key saved!")
+            st.rerun()
     else:
         # ── get user input ───────────────────────────────────────────
         user_prompt = st.chat_input("Ask me anything about the documents …", key="chatbox")
@@ -141,6 +175,7 @@ with tab_chat:
             for msg in st.session_state.chat_history:
                 with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
+
 
         if user_prompt:
             # 1 ▸ show it & store
@@ -168,6 +203,7 @@ with tab_chat:
                     alpha        = st.session_state.alpha,
                     max_snippet_length = st.session_state.max_snippet_length,
                     openai_api_key     = st.session_state.OPENAI_API_KEY,
+                    llm_model          = st.session_state.selected_model
                 )
 
                 # 2·3 stream tokens into the chat bubble

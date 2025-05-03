@@ -11,11 +11,24 @@ from langchain.embeddings import (
 )
 from langchain.callbacks.base import BaseCallbackHandler
 import json
+import random
 
+SPINNER_MESSAGES = [
+    "Tuning quantum flux capacitors…",
+    "Feeding PDFs to our pet AI llama…",
+    "Consulting the Book of Infinite Wisdom…",
+    "Summoning digital gnomes for indexing…",
+    "Injecting caffeine into vector space…",
+    "Decoding ancient neural runes…",
+    "Polishing the FAISS crystal ball…",
+    "Massaging cosine similarities…",
+    "Bribing the embeddings to behave…",
+    "Unleashing the power of dot products…",
+]
 # ╭──────────────────────────────────────────────────────────────╮
 # │  1. initialise FAISS index + dataframes (cached)            │
 # ╰──────────────────────────────────────────────────────────────╯
-@st.cache_resource(show_spinner="Loading FAISS index & embeddings…")
+@st.cache_resource(show_spinner=random.choice(SPINNER_MESSAGES))
 def initialize_search_index(openai_api_key: str | None = None):
     """
     Returns
@@ -66,7 +79,7 @@ def merge_snippets(
     # bucket all snippets by file (or any unique doc key you prefer)
     buckets: dict[str, list[dict]] = defaultdict(list)
     for h in hits:
-        buckets[h["filename"]].append(h)
+        buckets[h["pdf_url"]].append(h)
 
     merged = []
     for fname, lst in buckets.items():
@@ -223,18 +236,28 @@ def decide_rag(
     Return (use_rag, search_query).  Uses a cheap, non-streaming call.
     The model MUST answer with a JSON dict: {"use_rag": bool, "query": str}
     """
-
     sys = SystemMessage(
         content=(
             "You are a routing controller. "
-            "Analyse the user's latest message **and** their recent conversation. "
-            "If the assistant can answer without consulting their briefings and report, "
+            "Analyse the user's latest message AND the recent conversation. "
+            "If the assistant can answer fully without consulting internal documents, "
             "return: {\"use_rag\": false, \"query\": \"\"}. "
-            "Otherwise set use_rag true and craft an effective search query of "
-            f"≤ {max_query_tokens} tokens that would retrieve the needed docs from a RAG with Transport & Environment's publications. "
-            "Only output the JSON, nothing else."
+
+            "Otherwise, set use_rag to true and generate a precise, minimal search query "
+            f"(≤ {max_query_tokens} tokens) that would retrieve relevant documents. "
+
+            "Disambiguate similar terms. For example, if the user mentions 'UCO', "
+            "treat it as 'Used Cooking Oil' unless explicitly stated otherwise. "
+            "Avoid inserting or hallucinating organization names like 'Transport & Environment' "
+            "unless the user actually mentioned them. "
+
+            "Avoid bloated or vague queries. Focus on the technical, regulatory, or factual content "
+            "needed to answer the user's question. "
+
+            "Only return the JSON output with the keys: use_rag and query."
         )
     )
+
 
     # Keep just the last few turns to save tokens
     latest_turns = history[-6:]  # tweak as needed
@@ -247,8 +270,7 @@ def decide_rag(
     messages = hist_msgs + [sys, HumanMessage(content=prompt)]
 
     router = ChatOpenAI(
-        model_name="gpt-4o-mini",   # cheap & fast
-        temperature=0.0,
+        model_name="gpt-4.1-nano",   # cheap & fast
         openai_api_key=openai_api_key,
     )
 
@@ -277,6 +299,7 @@ def chat_rag(
     max_snippet_length: int = 500,
     callbacks: list | None = None,
     openai_api_key: str | None = None,
+    llm_model: str = "gpt-4o-mini"
 ) -> Generator[str, None, None]:
     """
     Streaming generator:
@@ -334,13 +357,14 @@ def chat_rag(
     ]
     messages = hist_msgs + seed_messages
 
+
     # --- 4) answer -----------------------------------------------------------
     model = ChatOpenAI(
-        model_name="gpt-4o-mini",
+        model_name=llm_model,
         streaming=True,
-        temperature=0.0,
         callbacks=callbacks,
         openai_api_key=openai_api_key,
+        temperature=1 if llm_model != "gpt-4o-mini" else 0
     )
 
     for token in model.stream(messages):
@@ -351,7 +375,7 @@ def chat_rag(
         yield "\n\n---\n\n**Sources:**\n\n"
         for idx, result in enumerate(docs, start=1):
             md = (
-                f"**{idx}. [{result.get('title','Untitled')}]({result.get('url','#')})**  \n"
+                f"**[{idx}]. [{result.get('title','Untitled')}]({result.get('url','#')})**: [{result.get('pdf_url','Untitled')}]({result.get('pdf_url','#')}) - \n"
                 f"*{result.get('publication_type','Unknown')} – "
                 f"{result.get('publication_date','')} – "
                 f"{round(result['score']*100,1)}% match*  \n"

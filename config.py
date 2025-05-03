@@ -1,5 +1,5 @@
 ### **`config.py`**
-
+import os
 # Embedding Model
 EMBEDDING_MODEL      = "sentence-transformers/all-MiniLM-L6-v2"
 CHUNK_SIZE           = 1500                       # Number of words per text chunk - This determines the context size vs granularity trade-off (I suggest testing between 100 to 1000)
