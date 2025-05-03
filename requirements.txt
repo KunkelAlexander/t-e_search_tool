@@ -1,3 +1,7 @@
 streamlit
 langchain
 faiss-cpu
+langchain-community
+pyarrow
+pandas
+sentence-transformers

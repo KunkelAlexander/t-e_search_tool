@@ -1,15 +1,14 @@
-# ── 🔧 NEW DEPENDENCIES ────────────────────────────────────────────
-# pip install -qU faiss-cpu pyarrow pandas langchain sentence-transformers
-
-import os, faiss, numpy as np, pandas as pd
+import faiss, numpy as np, pandas as pd
 from datetime import datetime
 import streamlit as st
 import config
-from config import INDEX_PATH, MAP_PATH, PAGES_PATH, HF_CACHE_DIR                            # your own config.py
-from langchain.embeddings import (
-    HuggingFaceEmbeddings, OpenAIEmbeddings
-)
-from langchain.callbacks.base import BaseCallbackHandler
+from config import INDEX_PATH, MAP_PATH, PAGES_PATH                            # your own config.py
+from langchain_community.embeddings import HuggingFaceEmbeddings, OpenAIEmbeddings
+from langchain_community.chat_models import ChatOpenAI  # If using ChatOpenAI
+from langchain.schema import SystemMessage, HumanMessage, AIMessage
+from typing import Generator, List, Tuple
+from collections import defaultdict
+from operator   import itemgetter
 import json
 import random
 
@@ -55,8 +54,6 @@ def initialize_search_index(openai_api_key: str | None = None):
     return index, embeddings, mapping, pages
 
 
-from collections import defaultdict
-from operator   import itemgetter
 
 def merge_snippets(
         hits: list[dict],
@@ -200,32 +197,6 @@ def search_pdfs(
 
 
 
-from typing import Generator, Iterable, List
-from langchain.chat_models import ChatOpenAI
-from langchain.schema import HumanMessage, SystemMessage
-from langchain.callbacks.base import BaseCallbackHandler
-
-# ────────────────────────────────────────────────
-# A minimal callback that streams tokens outward
-# ────────────────────────────────────────────────
-class StreamCallback(BaseCallbackHandler):
-    """Collects tokens and makes them iterable."""
-    def __init__(self):
-        self._queue: List[str] = []
-
-    # Called every time a new token arrives
-    def on_llm_new_token(self, token: str, **kwargs):
-        self._queue.append(token)
-
-    # Give Streamlit an iterable interface
-    def __iter__(self) -> Iterable[str]:
-        while self._queue:
-            yield self._queue.pop(0)
-
-from typing import Generator, List, Tuple
-from langchain.schema import SystemMessage, HumanMessage, AIMessage
-from langchain.chat_models import ChatOpenAI
-
 def decide_rag(
     prompt: str,
     history: List[dict],
@@ -275,7 +246,6 @@ def decide_rag(
     )
 
     answer = router.invoke(messages).content
-    print("Assistant answer: ", answer)
     try:
         j = json.loads(answer)
         return bool(j.get("use_rag")), j.get("query", "")

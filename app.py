@@ -1,8 +1,6 @@
 import streamlit as st
 import search as search
 import time
-from langchain.callbacks.streamlit import StreamlitCallbackHandler
-from streamlit_float import *
 
 # Set page configuration
 st.set_page_config(
