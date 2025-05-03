@@ -30,8 +30,8 @@ It couples a **FAISS** vector store with a **Streamlit** UI that offers both RAG
 
 ### 2. Clone & set up
 ```bash
-git clone https://github.com/your-repo/internal-knowledge-database.git
-cd internal-knowledge-database
+git clone https://github.com/KunkelAlexander/t-e_search_tool.git
+cd t-e_search_tool
 python -m venv venv                 # optional but recommended
 source venv/bin/activate            # Windows: venv\Scripts\activate
 ```
