@@ -42,7 +42,10 @@ with st.sidebar.expander("Settings"):
         if st.button("🔄  Reset chat", use_column_width=True):
                 st.session_state.chat_history = []
 
-    key = st.text_input("🔑 Enter your OpenAI API key", type="password")
+    key = st.text_input(
+        "🔑 Enter your OpenAI API key",
+        type="password"
+        )
     if key:
         st.session_state.OPENAI_API_KEY = key
         st.success("✅ API key saved!")
@@ -186,7 +189,11 @@ def add_message(role: str, content: str):
 
 with tab_chat:
     if not st.session_state.OPENAI_API_KEY:
-        key = st.text_input("🔑 Enter your OpenAI API key", type="password", key="password_input_2")
+        key = st.text_input(
+            "🔑 Enter your OpenAI API key",
+            type="password",
+            key="password_input_2"
+        )
         if key:
             st.session_state.OPENAI_API_KEY = key
             st.success("✅ API key saved!")
@@ -213,6 +220,7 @@ with tab_chat:
                     st.markdown(user_prompt)
             add_message("user", user_prompt)
 
+
             # 2 ▸ assistant bubble (will be streamed)
             with chat_container.chat_message("assistant"):
 
@@ -220,26 +228,36 @@ with tab_chat:
                 #     (you might clip to the last N turns)
                 history_for_llm = st.session_state.chat_history[-10:]
 
-                # 2·2 fire your RAG wrapper; it returns a generator of chunks
-                stream = search.chat_rag(
-                    user_prompt,
-                    history      = history_for_llm,                 # NEW
-                    faiss_index  = st.session_state.index,
-                    embeddings   = st.session_state.embeddings,
-                    mapping_df   = st.session_state.mapping,
-                    pages_df     = st.session_state.pages,
-                    k            = st.session_state.n_search_results,
-                    alpha        = st.session_state.alpha,
-                    max_snippet_length = st.session_state.max_snippet_length,
-                    openai_api_key     = st.session_state.OPENAI_API_KEY,
-                    llm_model          = st.session_state.selected_model
-                )
+                try:
+                    # 2·2 fire your RAG wrapper; it returns a generator of chunks
+                    stream = search.chat_rag(
+                        user_prompt,
+                        history      = history_for_llm,                 # NEW
+                        faiss_index  = st.session_state.index,
+                        embeddings   = st.session_state.embeddings,
+                        mapping_df   = st.session_state.mapping,
+                        pages_df     = st.session_state.pages,
+                        k            = st.session_state.n_search_results,
+                        alpha        = st.session_state.alpha,
+                        max_snippet_length = st.session_state.max_snippet_length,
+                        openai_api_key     = st.session_state.OPENAI_API_KEY,
+                        llm_model          = st.session_state.selected_model
+                    )
 
-                # 2·3 stream tokens into the chat bubble
-                assistant_text = st.write_stream(stream) if stream else ""
+                    # 2·3 stream tokens into the chat bubble
+                    assistant_text = st.write_stream(stream) if stream else ""
+
+
+                # 3  handle a bad / missing key  (or any auth failure during the call)
+                except Exception as e:
+                    assistant_text = f"❌ {e}\n\nPlease enter a valid key in the sidebar and try again."
+                    st.error(assistant_text)
 
             # 3 ▸ persist the assistant reply
             add_message("assistant", assistant_text)
+
+
+
 
 
 

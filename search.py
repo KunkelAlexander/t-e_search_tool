@@ -4,6 +4,7 @@ import streamlit as st
 import config
 from config import INDEX_PATH, MAP_PATH, PAGES_PATH                            # your own config.py
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain_community.chat_models import ChatOpenAI  # If using ChatOpenAI
 from langchain.schema import SystemMessage, HumanMessage, AIMessage
 from typing import Generator, List, Tuple
@@ -339,7 +340,6 @@ def chat_rag(
 
     for token in model.stream(messages):
         yield token
-
     # --- 5) add sources if RAG was used -------------------------------------
     if use_rag and docs:
         yield "\n\n---\n\n**Sources:**\n\n"
