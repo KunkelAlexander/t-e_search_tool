@@ -39,8 +39,6 @@ source venv/bin/activate            # Windows: venv\Scripts\activate
 ### 3. Install dependencies
 ```bash
 pip install -r requirements.txt
-# NEW: core libs if you maintain your own requirements file
-pip install faiss-cpu streamlit streamlit langchain sentence-transformers pyarrow
 ```
 
 ### 4. Configure
@@ -93,15 +91,6 @@ build_index.ipynb   create faiss vector database and read pdfs
 embeddings/         cached artefacts (index, parquet mapping,…)
 figures/            screenshots / GIFs
 ```
-
----
-
-## ✅ Running Tests
-```bash
-pytest -v tests/
-```
-
----
 
 ## 🌱 Roadmap
 
