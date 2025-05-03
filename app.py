@@ -1,6 +1,7 @@
 import streamlit as st
 import search as search
 import time
+import inspect
 
 # Set page configuration
 st.set_page_config(
@@ -11,7 +12,11 @@ st.set_page_config(
 )
 
 # Sidebar with logo and dropdown
-st.sidebar.image("assets/logo.png", use_column_width=True)  # Update with your logo path
+# choose the keyword based on what the current API exposes
+if "use_container_width" in inspect.signature(st.sidebar.image).parameters:
+    st.sidebar.image("assets/logo.png", use_container_width=True)
+else:
+    st.sidebar.image("assets/logo.png", use_column_width=True)
 
 # --- Default Session-State Values ---
 def _init_state(defaults: dict):
@@ -30,8 +35,12 @@ _init_state({
 
 with st.sidebar.expander("Settings"):
 
-    if st.button("🔄  Reset chat", use_container_width=True):
-            st.session_state.chat_history = []
+    if "use_container_width" in inspect.signature(st.button).parameters:
+        if st.button("🔄  Reset chat", use_container_width=True):
+                st.session_state.chat_history = []
+    else:
+        if st.button("🔄  Reset chat", use_column_width=True):
+                st.session_state.chat_history = []
 
     key = st.text_input("🔑 Enter your OpenAI API key", type="password")
     if key:
