@@ -13,26 +13,6 @@ st.set_page_config(
 # Sidebar with logo and dropdown
 st.sidebar.image("assets/logo.png", use_column_width=True)  # Update with your logo path
 
-
-# ── 0) CSS for the floating bar (same as before) ────────────────
-st.markdown(
-    """
-    <style>
-      /* floating footer */
-      .stChatInputContainer {
-          position: fixed !important;
-          left: 0; right: 0; bottom: 0;
-          z-index: 100;
-          border-top: 1px solid #eee;
-          background: white;
-      }
-      /* make room so bubbles aren't hidden */
-      .block-container { padding-bottom: 6rem; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
 # --- Default Session-State Values ---
 def _init_state(defaults: dict):
     for key, val in defaults.items():
@@ -52,11 +32,6 @@ with st.sidebar.expander("Settings"):
 
     if st.button("🔄  Reset chat", use_container_width=True):
             st.session_state.chat_history = []
-
-            # optional: also clear embeddings / FAISS index, etc.
-            # for k in ("index", "embeddings", "mapping", "pages"):
-            #     st.session_state.pop(k, None)
-
 
     key = st.text_input("🔑 Enter your OpenAI API key", type="password")
     if key:
@@ -86,6 +61,38 @@ if not st.session_state.initialized:
     st.session_state.update({"index": index, "embeddings": embeddings, "mapping": mapping, "pages": pages, "initialized": True})
 
 
+import streamlit as st
+
+def inject_theme_css():
+    st.markdown(
+        """
+        <style>
+        /* ---------- colour tokens ---------- */
+        :root {
+          /* light mode defaults */
+          --card-bg       : #ffffff;
+          --card-border   : #cccccc;
+
+          --meta-colour   : #006621;  /* green */
+          --link-colour   : #1a0dab;  /* Google‑blue */
+          --snippet-colour: #4d5156;  /* grey */
+        }
+
+        @media (prefers-color-scheme: dark) {
+          :root {
+            --card-bg       : #262730;
+            --card-border   : #3a3a3a;
+            --meta-colour   : #34a853;   /* lighter green */
+            --link-colour   : #8ab4f8;   /* Google‑blue on dark */
+            --snippet-colour: #e8eaed;   /* light grey */
+          }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+inject_theme_css()
 
 def display_result(result):
     similarity_percentage = int(result["weighted_score"] * 100)  # Convert to percentage
@@ -94,20 +101,35 @@ def display_result(result):
     color = "red" if similarity_percentage < 40 else "orange" if similarity_percentage < 70 else "green"
 
     html_content = f"""
-    <div style="border: 1px solid #ccc; padding: 10px; border-radius: 5px; margin-bottom: 10px; font-family: Arial, sans-serif;">
-            <p style="color: #006621; font-size: 12px; margin: 0;">{result['publication_type']} - {result['publication_date']} - {similarity_percentage}% match - <a href="{result['pdf_url']}" target="_blank"> {result['pdf_url']} </a> </p>
-                <h3 style="margin: 0; font-size: 18px;">
-                    <a href="{result['url']}" target="_blank" style="color: #1a0dab; text-decoration: none;">
-                        {result['title']}
-                    </a>
-                </h3>
-            <p style="color: #4d5156; font-size: 12px; margin-top: 8px;">{result['snippet']}</p>
+    <div style="
+        border: 1px solid var(--card-border);
+        background: var(--card-bg);
+        padding: 10px;
+        border-radius: 5px;
+        margin-bottom: 10px;
+        font-family: Arial, sans-serif;">
+
+    <p style="color: var(--meta-colour); font-size: 12px; margin: 0;">
+        {result['publication_type']} – {result['publication_date']} – {similarity_percentage}% match –
+        <a href="{result['pdf_url']}" target="_blank">{result['pdf_url']}</a>
+    </p>
+
+    <h3 style="margin: 0; font-size: 18px;">
+        <a href="{result['url']}" target="_blank"
+            style="color: var(--link-colour); text-decoration: none;">
+            {result['title']}
+        </a>
+    </h3>
+
+    <p style="color: var(--snippet-colour); font-size: 12px; margin-top: 8px;">
+        {result['snippet']}
+    </p>
     </div>
     """
 
+
     st.markdown(html_content, unsafe_allow_html=True)
 
-# --- Search Mode Implementation ---
 
 
 # --- Layout with Tabs ---
