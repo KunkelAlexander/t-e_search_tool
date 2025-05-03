@@ -11,7 +11,7 @@ st.set_page_config(
 )
 
 # Sidebar with logo and dropdown
-st.sidebar.image("assets/logo.png", use_column_width=True)  # Update with your logo path
+st.sidebar.image("assets/logo.png", use_container_width=True)  # Update with your logo path
 
 
 # ── 0) CSS for the floating bar (same as before) ────────────────
