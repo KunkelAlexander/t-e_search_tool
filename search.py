@@ -128,7 +128,7 @@ def search_pdfs(
     """
 
     # ➊ embed & search
-    q_vec = embeddings.embed_query(query)
+    q_vec = embeddings.embed_query(f"query: {query}")
     D, I  = faiss_index.search(np.array([q_vec]), k)            # D = L2 distances
 
     now = datetime.now()
