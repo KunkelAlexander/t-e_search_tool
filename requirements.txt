@@ -2,6 +2,6 @@ streamlit
 langchain
 faiss-cpu
 langchain-community
-pyarrow
+openai
 pandas
 sentence-transformers
