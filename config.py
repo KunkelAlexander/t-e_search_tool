@@ -13,8 +13,7 @@ PAGES_PATH   = "./embeddings/metadata_with_fulltext.parquet"            # fullte
 
 HF_CACHE_DIR = "./hf_model_cache"
 
-os.environ["TRANSFORMERS_CACHE"]           = HF_CACHE_DIR
-os.environ["SENTENCE_TRANSFORMERS_HOME"]   = HF_CACHE_DIR
+os.environ["HF_HOME"] = HF_CACHE_DIR
 
 # Streamlit App
 LOGO_PATH = "assets/logo.png"     # Path to your company logo

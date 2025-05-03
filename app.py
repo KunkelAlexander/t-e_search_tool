@@ -214,10 +214,26 @@ with tab_chat:
 
 # Footer
 st.sidebar.markdown("---")
-
 st.sidebar.markdown(
     """
-    <div style="padding: 1em; border-left: 4px solid #f39c12; background-color: #fdf6e3; border-radius: 5px;">
+    <style>
+    @media (prefers-color-scheme: dark) {
+        .custom-disclaimer {
+            color: white !important;
+            background-color: #333 !important;
+            border-left-color: #f39c12 !important;
+        }
+    }
+    @media (prefers-color-scheme: light) {
+        .custom-disclaimer {
+            color: black !important;
+            background-color: #fdf6e3 !important;
+            border-left-color: #f39c12 !important;
+        }
+    }
+    </style>
+
+    <div class="custom-disclaimer" style="padding: 1em; border-left: 4px solid #f39c12; border-radius: 5px;">
         <h4 style="margin-top: 0;">Disclaimer</h4>
         <p style="margin-bottom: 0.5em;">
             This website is a personal project developed and maintained by <strong>Alexander Kunkel</strong>. The information presented here, including any commentary or analysis, is based solely on publicly available sources.

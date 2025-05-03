@@ -3,7 +3,7 @@ from datetime import datetime
 import streamlit as st
 import config
 from config import INDEX_PATH, MAP_PATH, PAGES_PATH                            # your own config.py
-from langchain_community.embeddings import HuggingFaceEmbeddings, OpenAIEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.chat_models import ChatOpenAI  # If using ChatOpenAI
 from langchain.schema import SystemMessage, HumanMessage, AIMessage
 from typing import Generator, List, Tuple
