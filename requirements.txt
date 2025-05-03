@@ -1,7 +1,8 @@
 streamlit
 langchain
-faiss-cpu
 langchain-community
+langchain-huggingface
+sentence-transformers
+faiss-cpu
 openai
 pandas
-sentence-transformers
