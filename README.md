@@ -1,4 +1,4 @@
-# Internal Knowledge Database
+# T&E Publication Search & Chat
 
 A lightweight **research‑assistant platform** that lets you _index_ and _chat_ with large collections of PDF publications built with the help of LLMs.
 It couples a **FAISS** vector store with a **Streamlit** UI that offers both RAG-powered search and an AI‑powered chat interface.
