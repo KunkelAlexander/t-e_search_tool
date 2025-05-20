@@ -285,7 +285,7 @@ st.sidebar.markdown(
     <div class="custom-disclaimer" style="padding: 1em; border-left: 4px solid #f39c12; border-radius: 5px;">
         <h4 style="margin-top: 0;">Disclaimer</h4>
         <p style="margin-bottom: 0.5em;">
-            This website is a personal project developed and maintained by <strong>Alexander Kunkel</strong>. The information presented here, including any commentary or analysis, is based solely on publicly available sources.
+            The information presented here, including any commentary or analysis, is based solely on publicly available sources.
         </p>
         <p style="margin-bottom: 0.5em;">
             It does not reflect the views, policies, or opinions of <strong>Transport & Environment</strong> or any of its affiliates. This site is not officially associated with or endorsed by Transport & Environment.
