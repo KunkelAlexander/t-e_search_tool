@@ -558,9 +558,10 @@ def position_timeline(
     #    • single id  → [2016-19]
     #    • lists      → [2016-19, 2016-20]  or  (2016-19,2016-20)
     citation_rx = re.compile(
-        r'[\[\(]\^?('                     # opening [ or ( with optional ^
-        r'\d{4}-\d+(?:\s*,\s*\d{4}-\d+)*'  # one or more ids, comma-separated
-        r')[\]\)]'                         # closing ] or )
+        r'(?<!\[\^)'                       # negative lookbehind to exclude existing footnotes
+        r'[\[\(]'                         # opening [ or (
+        r'(\d{4}-\d+(?:\s*,\s*\d{4}-\d+)*)'
+        r'[\]\)]'                         # closing ] or )
     )
 
 
