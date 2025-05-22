@@ -29,7 +29,7 @@ _init_state({
     "alpha": 0.05,
     "max_snippet_length": 1500,
     "n_search_results": 10,
-    "OPENAI_API_KEY": None,
+    "API_KEY": None,
     "selected_model": "gpt-4o-mini",
     "chat_history": [],
     "n_chrono_search_results": 3,
@@ -48,11 +48,11 @@ with st.sidebar.expander("Settings"):
 
 
     key = st.text_input(
-        "🔑 Enter your OpenAI API key",
+        "🔑 Enter your OpenAI API key or password",
         type="password"
         )
     if key:
-        st.session_state.OPENAI_API_KEY = key
+        st.session_state.API_KEY = key
         st.success("✅ API key saved!")
     st.slider("# Search Results", 5, 100, step=5, key="n_search_results")
 
@@ -63,9 +63,7 @@ with st.sidebar.expander("Settings"):
         "gpt-4.1-nano",        # 📊 Optimized for math, coding, and visual tasks
         "gpt-4.1-mini",        # 🧠 Efficient STEM-focused reasoning
         "gpt-4.1",             # 🧮 Advanced reasoning with visual input
-        "o1-mini",             #
         "o3-mini",             #
-        "o3 (expensive)",  #
     ]
     st.selectbox("🤖 Choose OpenAI model", model_options, key="selected_model")
 
@@ -94,6 +92,17 @@ if not st.session_state.initialized:
     index, embeddings, mapping, pages, year2vec = search.initialize_search_index()
     st.session_state.update({"index": index, "embeddings": embeddings, "mapping": mapping, "pages": pages, "year2vec": year2vec, "initialized": True})
 
+# Function to get the correct key (never exposing the secret directly)
+def get_api_key():
+    if st.session_state.API_KEY and st.session_state.API_KEY.startswith("streamlit_"):
+        if st.session_state.API_KEY == st.secrets["APP_PASSWORD"]:
+            return st.secrets["OPENAI_API_KEY"]
+        else:
+            return None
+    elif st.session_state.API_KEY:
+        return st.session_state.API_KEY
+    else:
+        return None
 
 def inject_theme_css():
     st.markdown(
@@ -222,14 +231,14 @@ def add_message(role: str, content: str):
     )
 
 with tab_chat:
-    if not st.session_state.OPENAI_API_KEY:
+    if not get_api_key():
         key = st.text_input(
-            "🔑 Enter your OpenAI API key",
+            "🔑 Enter your OpenAI API key or password",
             type="password",
-            key="password_input_2"
+            key="password_input_3"
         )
         if key:
-            st.session_state.OPENAI_API_KEY = key
+            st.session_state.API_KEY = key
             st.success("✅ API key saved!")
             st.rerun()
     else:
@@ -331,30 +340,42 @@ with tab_chrono:
         st.caption(f"⏱️ {time.time() - t0:.2f}s")
 
 with tab_position:
-    topic_q = st.text_input(
-        "What T&E position would you like to trace?",
-        placeholder="e.g. indirect land-use change"
-    )
 
-    run_timeline = st.button("🔄 Generate timeline", key="run_timeline")
-
-    if run_timeline and topic_q:
-        start = time.time()
-        timeline_md = search.position_timeline(
-            topic_q,
-            faiss_index   = st.session_state.index,
-            embeddings    = st.session_state.embeddings,
-            mapping_df    = st.session_state.mapping,
-            pages_df      = st.session_state.pages,
-            year2vec      = st.session_state.year2vec,
-            openai_api_key= st.session_state.OPENAI_API_KEY,
-            alpha         = st.session_state.alpha,
-            max_snippet_length = st.session_state.max_snippet_length,
-            k_per_year    = st.session_state.position_hits,
-            min_score     = st.session_state.position_similarity / 100,
+    if not get_api_key():
+        key = st.text_input(
+            "🔑 Enter your OpenAI API key or password",
+            type="password",
+            key="password_input_2"
         )
-        st.markdown(timeline_md, unsafe_allow_html=True)
-        st.caption(f"⏱️ {time.time()-start:.2f}s")
+        if key:
+            st.session_state.API_KEY = key
+            st.success("✅ API key saved!")
+            st.rerun()
+    else:
+        topic_q = st.text_input(
+            "What T&E position would you like to trace?",
+            placeholder="e.g. indirect land-use change"
+        )
+
+        run_timeline = st.button("🔄 Generate timeline", key="run_timeline")
+
+        if run_timeline and topic_q:
+            start = time.time()
+            timeline_md = search.position_timeline(
+                topic_q,
+                faiss_index   = st.session_state.index,
+                embeddings    = st.session_state.embeddings,
+                mapping_df    = st.session_state.mapping,
+                pages_df      = st.session_state.pages,
+                year2vec      = st.session_state.year2vec,
+                openai_api_key= st.session_state.OPENAI_API_KEY,
+                alpha         = st.session_state.alpha,
+                max_snippet_length = st.session_state.max_snippet_length,
+                k_per_year    = st.session_state.position_hits,
+                min_score     = st.session_state.position_similarity / 100,
+            )
+            st.markdown(timeline_md, unsafe_allow_html=True)
+            st.caption(f"⏱️ {time.time()-start:.2f}s")
 
 # Footer
 st.sidebar.markdown("---")
