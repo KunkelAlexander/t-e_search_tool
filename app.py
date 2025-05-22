@@ -2,6 +2,7 @@ import streamlit as st
 import search as search
 import time
 import inspect
+import config as config
 
 # Set page configuration
 st.set_page_config(
@@ -30,17 +31,21 @@ _init_state({
     "n_search_results": 10,
     "OPENAI_API_KEY": None,
     "selected_model": "gpt-4o-mini",
-    "chat_history": []
+    "chat_history": [],
+    "n_chrono_search_results": 3,
+    "chrono_similarity_threshold": 75
 })
+
+with st.sidebar:
+    if "use_container_width" in inspect.signature(st.button).parameters:
+        if st.button("🔄  Reset", use_container_width=True):
+                st.session_state.chat_history = []
+    else:
+        if st.button("🔄  Reset", use_column_width=True):
+                st.session_state.chat_history = []
 
 with st.sidebar.expander("Settings"):
 
-    if "use_container_width" in inspect.signature(st.button).parameters:
-        if st.button("🔄  Reset chat", use_container_width=True):
-                st.session_state.chat_history = []
-    else:
-        if st.button("🔄  Reset chat", use_column_width=True):
-                st.session_state.chat_history = []
 
     key = st.text_input(
         "🔑 Enter your OpenAI API key",
@@ -65,12 +70,22 @@ with st.sidebar.expander("Settings"):
     st.selectbox("🤖 Choose OpenAI model", model_options, key="selected_model")
 
     st.slider("Relevancy of more recent results", 0.0, 0.5, value = 0.01, step=0.01, key="alpha")
-    st.slider("Length of snippets", 200, 2000, value=1000, step=50, key="max_snippet_length")
+    st.slider("Length of snippets", 0, 2000, value=1000, step=50, key="max_snippet_length")
+
+    st.slider("# Search Results", 1, 20, value=3, step=1, key="n_chrono_search_results")
+    st.slider(
+        "Chronological similarity (%)",
+        0, 100,
+        value= 75,
+        step= 1,
+        key="chrono_similarity_threshold"
+    )
+    group_by_year = st.checkbox("Group results by year", value=True)
 
 # --- Initialize Search Index Once ---
 if not st.session_state.initialized:
-    index, embeddings, mapping, pages = search.initialize_search_index()
-    st.session_state.update({"index": index, "embeddings": embeddings, "mapping": mapping, "pages": pages, "initialized": True})
+    index, embeddings, mapping, pages, year2vec = search.initialize_search_index()
+    st.session_state.update({"index": index, "embeddings": embeddings, "mapping": mapping, "pages": pages, "year2vec": year2vec, "initialized": True})
 
 
 def inject_theme_css():
@@ -124,9 +139,6 @@ inject_theme_css()
 def display_result(result):
     similarity_percentage = int(result["weighted_score"] * 100)  # Convert to percentage
 
-    # Define the color dynamically (red → orange → green)
-    color = "red" if similarity_percentage < 40 else "orange" if similarity_percentage < 70 else "green"
-
     html_content = f"""
     <div style="
         border: 1px solid var(--card-border);
@@ -160,7 +172,7 @@ def display_result(result):
 
 
 # --- Layout with Tabs ---
-tab_search, tab_chat = st.tabs(["❓Search", "💬 Chat"])
+tab_chat, tab_search, tab_chrono = st.tabs(["💬 Chat", "❓Search", "📅❓ Chronological Search"])
 
 
 with tab_search:
@@ -272,6 +284,44 @@ with tab_chat:
             add_message("assistant", assistant_text)
 
 
+with tab_chrono:
+    chrono_q = st.text_input("Enter your query:", key="chrono_query")
+
+    if chrono_q:
+        st.write(f"#### Chronological results for: `{chrono_q}`")
+        t0 = time.time()
+
+        # newest → oldest
+        years = sorted(st.session_state.year2vec.keys(), reverse=True)
+        any_hit = False
+        for yr in years:
+            hits = search.search_pdfs(
+                chrono_q,
+                faiss_index   = st.session_state.index,
+                embeddings    = st.session_state.embeddings,
+                mapping_df    = st.session_state.mapping,
+                pages_df      = st.session_state.pages,
+                k             = st.session_state.n_chrono_search_results,
+                alpha         = st.session_state.alpha,
+                max_snippet_length = st.session_state.max_snippet_length,
+                threshold     = st.session_state.chrono_similarity_threshold / 100,
+                year2vec      = st.session_state.year2vec,
+                year          = yr,
+            )
+            if hits:
+                if any_hit:
+                    st.markdown(f"---\n## {yr}")
+                else:
+                    st.markdown(f"## {yr}")
+
+                any_hit = True
+                for h in hits:
+                    display_result(h)
+
+        if not any_hit:
+            st.info("No year contained publications above the threshold.")
+
+        st.caption(f"⏱️ {time.time() - t0:.2f}s")
 
 # Footer
 st.sidebar.markdown("---")

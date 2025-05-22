@@ -52,7 +52,30 @@ def initialize_search_index(openai_api_key: str | None = None):
     mapping = pd.read_parquet(MAP_PATH).set_index("vector_id")
     pages   = pd.read_parquet(PAGES_PATH).set_index("ID")
 
-    return index, embeddings, mapping, pages
+    # --- convenience column so we don't have to re-parse later -------------
+    def _parse_year(date_str):
+        for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S",
+                    "%B %d, %Y, %I:%M:%S %p", "%B %d, %Y",
+                    "%b %d, %Y, %I:%M:%S %p"):
+            try:
+                return datetime.strptime(date_str, fmt).year
+            except Exception:
+                continue
+        return None
+
+    pages["year"] = pages["Publication Date"].apply(_parse_year)
+
+    tmp = (
+        mapping.reset_index()           # vector_id + doc_id
+               .merge(pages["year"], left_on="doc_id", right_index=True)
+               .dropna(subset=["year"])
+    )
+    year2vec = {
+        int(y): grp["vector_id"].to_numpy(np.int64)
+        for y, grp in tmp.groupby("year", sort=True)
+    }
+
+    return index, embeddings, mapping, pages, year2vec
 
 
 
@@ -113,7 +136,10 @@ def search_pdfs(
         *,
         k: int = config.SEARCH_RESULT_K,
         alpha: float = 0.0,
-        max_snippet_length: int = 500
+        max_snippet_length: int = 500,
+        threshold: float = 0.0,
+        year2vec: dict[int, np.ndarray]  = None,
+        year: int = None
     ) -> list[dict]:
     """
     Parameters
@@ -126,15 +152,33 @@ def search_pdfs(
     k      : int    – how many results
     alpha  : float  – 0 → ignore recency, >0 → exponential decay / year
     """
-
+    print(threshold)
     # ➊ embed & search
-    q_vec = embeddings.embed_query(f"query: {query}")
-    D, I  = faiss_index.search(np.array([q_vec]), k)            # D = L2 distances
+    q_vec = embeddings.embed_query(f"query: {query.lower()}")
+
+    if year and year2vec:
+        # ---------- 0) do we have vectors for this year? ----------
+        vec_ids = year2vec.get(year)
+        if vec_ids is None or len(vec_ids) == 0:
+            return []
+
+        selector = faiss.IDSelectorArray(vec_ids)      # or Batch/Bitmap if huge
+        p = faiss.SearchParametersIVF(sel = selector)
+        D, I  = faiss_index.search(np.array([q_vec]), k, params=p)            # D = L2 distances
+    else:
+        D, I  = faiss_index.search(np.array([q_vec]), k)            # D = L2 distances
 
     now = datetime.now()
     results = []
 
     for dist, vec_id in zip(D[0], I[0]):
+
+
+        similarity   = 1 / (1 + dist)      # convert L2 distance → similarity
+        if similarity < threshold:
+            continue
+
+
         # mapping row gives us doc_id and offsets
         meta_row = mapping_df.loc[vec_id]
         doc_row  = pages_df.loc[meta_row["doc_id"]]   # full metadata
@@ -174,8 +218,12 @@ def search_pdfs(
                 pub_date_clean = pub_date_str                    # fallback
         else:
             pub_date_clean = None
-        similarity   = 1 / (1 + dist)      # convert L2 distance → similarity
-        weighted     = similarity * date_weight
+
+        # Don't weigh by year for search in a given year
+        if year and year2vec:
+            weighted = similarity
+        else:
+            weighted = similarity * date_weight
 
         results.append({
             "title"            : doc_row.get("Title"),
@@ -352,3 +400,5 @@ def chat_rag(
                 f"> {result.get('snippet','').strip()}  \n\n"
             )
             yield md
+
+

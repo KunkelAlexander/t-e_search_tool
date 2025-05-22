@@ -3,7 +3,6 @@ import os
 # Embedding Model
 EMBEDDING_MODEL      = "intfloat/multilingual-e5-small"
 CHUNK_SIZE           = 1500                       # Number of words per text chunk - This determines the context size vs granularity trade-off (I suggest testing between 100 to 1000)
-FAISS_TOP_K          = 5                         # Number of top results to retrieve
 SEARCH_RESULT_K      = 5
 
 # Where you stored the artefacts when building the index
