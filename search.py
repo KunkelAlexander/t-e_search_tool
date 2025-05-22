@@ -532,7 +532,7 @@ def position_timeline(
             "For each year, write 1-3 bullet points. "
             "Format the answer in markdown with highlights for headings, years, and bullet points."
             "When you cite, use the bracketed reference ids exactly as given "
-            "(e.g. [2022-3]). Finish with a two-sentence ‘Overall trajectory’ "
+            "(e.g. cite exactly like [2022-3] or [2022-3, 2024-5]). Finish with a two-sentence ‘Overall trajectory’ "
             "summary.\n\n"
             "Snippets:\n" + "\n\n".join(ctx_blocks)
         )
@@ -558,10 +558,11 @@ def position_timeline(
     #    • single id  → [2016-19]
     #    • lists      → [2016-19, 2016-20]  or  (2016-19,2016-20)
     citation_rx = re.compile(
-        r'[\[\(]'                       # opening [ or (
-        r'(\d{4}-\d+(?:\s*,\s*\d{4}-\d+)*)'   # id or id,id,id…
-        r'[\]\)]'                       # closing ] or )
+        r'[\[\(]\^?('                     # opening [ or ( with optional ^
+        r'\d{4}-\d+(?:\s*,\s*\d{4}-\d+)*'  # one or more ids, comma-separated
+        r')[\]\)]'                         # closing ] or )
     )
+
 
     # ② collect *all* ids that appear anywhere in the text
     used_refs = {
