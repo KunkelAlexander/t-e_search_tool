@@ -283,7 +283,7 @@ with tab_chat:
                         k            = st.session_state.n_search_results,
                         alpha        = st.session_state.alpha,
                         max_snippet_length = st.session_state.max_snippet_length,
-                        openai_api_key     = st.session_state.OPENAI_API_KEY,
+                        openai_api_key     = get_api_key(),
                         llm_model          = st.session_state.selected_model
                     )
 
@@ -368,7 +368,7 @@ with tab_position:
                 mapping_df    = st.session_state.mapping,
                 pages_df      = st.session_state.pages,
                 year2vec      = st.session_state.year2vec,
-                openai_api_key= st.session_state.OPENAI_API_KEY,
+                openai_api_key= get_api_key(),
                 alpha         = st.session_state.alpha,
                 max_snippet_length = st.session_state.max_snippet_length,
                 k_per_year    = st.session_state.position_hits,
