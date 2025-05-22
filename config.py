@@ -5,6 +5,12 @@ EMBEDDING_MODEL      = "intfloat/multilingual-e5-small"
 CHUNK_SIZE           = 1500                       # Number of words per text chunk - This determines the context size vs granularity trade-off (I suggest testing between 100 to 1000)
 SEARCH_RESULT_K      = 5
 
+TRIAGE_MODEL            = "gpt-4.1-nano"
+TIMELINE_MODEL          = "o3-mini"
+
+TOP_HITS_PER_YEAR       = 3      # already defined
+SIMILARITY_THRESHOLD    = 0.75   # already defined
+
 # Where you stored the artefacts when building the index
 INDEX_PATH   = "./embeddings/multilingual-e5-small-docs.index"               # faiss.write_index(...)
 MAP_PATH     = "./embeddings/multilingual-e5-small-faiss_mapping.parquet"    # vector_id → doc_id / offsets

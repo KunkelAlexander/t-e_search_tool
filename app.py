@@ -82,6 +82,13 @@ with st.sidebar.expander("Settings"):
     )
     group_by_year = st.checkbox("Group results by year", value=True)
 
+    st.slider("Position: min similarity (%)",
+            0, 100, value=30, step=5,
+            key="position_similarity")
+    st.slider("Position: hits per year",
+              1, 5, value=3, step=1,
+              key="position_hits")
+
 # --- Initialize Search Index Once ---
 if not st.session_state.initialized:
     index, embeddings, mapping, pages, year2vec = search.initialize_search_index()
@@ -172,7 +179,7 @@ def display_result(result):
 
 
 # --- Layout with Tabs ---
-tab_chat, tab_search, tab_chrono = st.tabs(["💬 Chat", "❓Search", "📅❓ Chronological Search"])
+tab_chat, tab_search, tab_chrono, tab_position = st.tabs(["💬 Chat", "❓Search", "📅 Chronological", "📜 Position"])
 
 
 with tab_search:
@@ -322,6 +329,30 @@ with tab_chrono:
             st.info("No year contained publications above the threshold.")
 
         st.caption(f"⏱️ {time.time() - t0:.2f}s")
+
+with tab_position:
+    topic_q = st.text_input(
+        "What T&E position would you like to trace?",
+        placeholder="e.g. indirect land-use change"
+    )
+
+    if topic_q:
+        start = time.time()
+        timeline_md = search.position_timeline(
+            topic_q,
+            faiss_index   = st.session_state.index,
+            embeddings    = st.session_state.embeddings,
+            mapping_df    = st.session_state.mapping,
+            pages_df      = st.session_state.pages,
+            year2vec      = st.session_state.year2vec,
+            openai_api_key= st.session_state.OPENAI_API_KEY,
+            alpha         = st.session_state.alpha,
+            max_snippet_length = st.session_state.max_snippet_length,
+            k_per_year    = st.session_state.position_hits,
+            min_score     = st.session_state.position_similarity / 100,
+        )
+        st.markdown(timeline_md, unsafe_allow_html=True)
+        st.caption(f"⏱️ {time.time()-start:.2f}s")
 
 # Footer
 st.sidebar.markdown("---")

@@ -12,6 +12,7 @@ from collections import defaultdict
 from operator   import itemgetter
 import json
 import random
+import re
 
 SPINNER_MESSAGES = [
     "Tuning quantum flux capacitors…",
@@ -138,8 +139,8 @@ def search_pdfs(
         alpha: float = 0.0,
         max_snippet_length: int = 500,
         threshold: float = 0.0,
-        year2vec: dict[int, np.ndarray]  = None,
-        year: int = None
+        year2vec: dict[int, np.ndarray] | None  = None,
+        year: int | None = None
     ) -> list[dict]:
     """
     Parameters
@@ -152,7 +153,6 @@ def search_pdfs(
     k      : int    – how many results
     alpha  : float  – 0 → ignore recency, >0 → exponential decay / year
     """
-    print(threshold)
     # ➊ embed & search
     q_vec = embeddings.embed_query(f"query: {query.lower()}")
 
@@ -175,8 +175,6 @@ def search_pdfs(
 
 
         similarity   = 1 / (1 + dist)      # convert L2 distance → similarity
-        if similarity < threshold:
-            continue
 
 
         # mapping row gives us doc_id and offsets
@@ -224,6 +222,9 @@ def search_pdfs(
             weighted = similarity
         else:
             weighted = similarity * date_weight
+
+        if similarity < weighted:
+            continue
 
         results.append({
             "title"            : doc_row.get("Title"),
@@ -402,3 +403,178 @@ def chat_rag(
             yield md
 
 
+def position_timeline(
+        topic: str,
+        *,
+        faiss_index,
+        embeddings,
+        mapping_df,
+        pages_df,
+        year2vec,
+        openai_api_key: str,
+        alpha: float = 0.0,
+        max_snippet_length: int = 500,
+        k_per_year: int = config.TOP_HITS_PER_YEAR,
+        min_score: float = config.SIMILARITY_THRESHOLD,
+        triage_model: str = config.TRIAGE_MODEL,
+        timeline_model: str = config.TIMELINE_MODEL,
+) -> str:
+    """
+    Return a fully-formed Markdown timeline answering
+        “What is T&E’s position on <topic> and how did it change?”
+    with bracketed citations.
+
+    Steps
+      1. router → search query
+      2. per-year FAISS search (filtered)
+      3. triage hits with a cheap model
+      4. big model writes the chronology
+    """
+    # ---------- 1) router ----------
+    use_rag, search_query = decide_rag(
+        topic,                       # user prompt
+        history=[],                  # no chat
+        max_query_tokens=32,
+        openai_api_key=openai_api_key,
+    )
+    # we *always* want RAG here, but decide_rag also disambiguates the query
+    if not use_rag:
+        search_query = topic
+
+    # ---------- 2) gather hits per year ----------
+    now_year = datetime.now().year
+    years = [y for y in sorted(year2vec) if now_year - y]
+    all_hits: list[dict] = []
+
+    for yr in sorted(years, reverse=True):        # newest → oldest
+        hits = search_pdfs(
+            search_query,
+            faiss_index   = faiss_index,
+            embeddings    = embeddings,
+            mapping_df    = mapping_df,
+            pages_df      = pages_df,
+            k             = k_per_year,       # oversample, we'll triage
+            alpha         = alpha,
+            max_snippet_length = max_snippet_length,
+            threshold     = min_score,
+            year2vec      = year2vec,
+            year          = yr,
+        )
+        # annotate with year label
+        for h in hits:
+            h["year"] = yr
+        all_hits.extend(hits)
+
+    if not all_hits:
+        return (
+            "No documents above the similarity threshold were found in the past "
+        )
+
+    # ---------- 3) triage with gpt-4.1-nano ----------
+    triage_chunks = []
+    for idx, h in enumerate(all_hits, start=1):
+        triage_chunks.append(
+            f"[{idx}] ({h['year']}) {h['title']}\n{h['snippet']}"
+        )
+
+    triage_prompt = (
+        "You are a policy analyst at Transport & Environment. "
+        "Given the snippets below, select **only** those that express, discuss, "
+        "or summarise T&E’s own *position or stance* on the topic "
+        f"“{topic}”.\n\n"
+        "Return a JSON list of the reference numbers that are relevant.\n\n"
+        "Snippets:\n" + "\n\n".join(triage_chunks)
+    )
+
+    triager = ChatOpenAI(
+        model_name=triage_model,
+        openai_api_key=openai_api_key,
+        temperature=1 if triage_model != "gpt-4o-mini" else 0
+    )
+    try:
+        triage_reply = triager.invoke([HumanMessage(content=triage_prompt)]).content
+        keep_ids = set(json.loads(triage_reply))
+    except Exception:
+        # fall back: keep everything
+        keep_ids = set(range(1, len(all_hits) + 1))
+
+    kept_hits = [h for i, h in enumerate(all_hits, start=1) if i in keep_ids]
+    if not kept_hits:
+        return "No publication explicitly states T&E’s position on this topic."
+
+    # group again by year (newest → oldest)
+    kept_hits.sort(key=lambda x: ( -x["year"], -x["weighted_score"]))
+    grouped: dict[int, list[dict]] = defaultdict(list)
+    for h in kept_hits:
+        if len(grouped[h["year"]]) < k_per_year:
+            grouped[h["year"]].append(h)
+
+    # ---------- 4) build context and let the big model write ----------
+    ctx_blocks = []
+    ref_map = {}                      # map global ref → markdown link
+    global_idx = 1
+    for yr in sorted(grouped, reverse=True):
+        for h in grouped[yr]:
+            ref = f"{yr}-{global_idx}"
+            ref_map[ref] = (
+                f"[{h['title']}]({h['url'] or h['pdf_url'] or '#'})"
+            )
+            ctx_blocks.append(
+                f"[{ref}] ({yr}) {h['title']}\n{h['snippet']}"
+            )
+            h["ref"] = ref
+            global_idx += 1
+
+    sys_ctx = SystemMessage(
+        content=(
+            "You are an expert policy summariser at Transport & Environment. "
+            "Using the provided snippets, compose a chronological timeline "
+            "explaining how T&E’s **position** on the topic evolved. "
+            "For each year, write 1-3 bullet points. "
+            "Format the answer in markdown with a title, bold highlights for years and key concepts, bullet points for the arguments and a highlight for the conclusion."
+            "When you cite, use the bracketed reference ids exactly as given "
+            "(e.g. [2022-3]). Finish with a one-sentence ‘Overall trajectory’ "
+            "summary.\n\n"
+            "Snippets:\n" + "\n\n".join(ctx_blocks)
+        )
+    )
+
+    writer = ChatOpenAI(
+        model_name=timeline_model,
+        openai_api_key=openai_api_key,
+        temperature=1 if timeline_model != "gpt-4o-mini" else 0
+    )
+    answer = writer.invoke([sys_ctx]).content
+
+
+# ------------------------------------------------------------
+    # 5)   POST-PROCESS: inline ↔︎ foot-note, build compact sources
+    # ------------------------------------------------------------
+    #   • Convert every “[YYYY-n]” used by the model into a foot-note marker
+    #   • Keep only refs that are *actually present* in the text
+    # ------------------------------------------------------------
+    ref_pattern = re.compile(r"\[(\d{4}-\d+)\]")
+    used_refs   = set(ref_pattern.findall(answer))
+
+    def to_footnote(match):
+        ref = match.group(1)
+        return f"[^{ref}]"
+
+    answer = ref_pattern.sub(to_footnote, answer)   # inline replacements
+    answer = answer.replace("][^", "], [^")         # ← NEW: add comma + space
+
+    # Build foot-note block in the order they appear
+    footnotes = []
+    for h in kept_hits:
+        if h["ref"] in used_refs:
+            link = h["url"] or h["pdf_url"] or "#"
+            footnotes.append(
+                f"[^{h['ref']}]:  {h['publication_date'] or ''} - [{h['title']}]({link}) — "
+                f"{h['publication_type']}"
+            )
+
+    if not footnotes:
+        footnotes.append("*The model did not cite any document explicitly.*")
+
+    final_md = answer + "\n\n---\n" + "\n".join(footnotes)
+    return final_md
