@@ -336,7 +336,9 @@ with tab_position:
         placeholder="e.g. indirect land-use change"
     )
 
-    if topic_q:
+    run_timeline = st.button("🔄 Generate timeline", key="run_timeline")
+
+    if run_timeline and topic_q:
         start = time.time()
         timeline_md = search.position_timeline(
             topic_q,

@@ -479,8 +479,7 @@ def position_timeline(
 
     triage_prompt = (
         "You are a policy analyst at Transport & Environment. "
-        "Given the snippets below, select **only** those that express, discuss, "
-        "or summarise T&E’s own *position or stance* on the topic "
+        "Given the snippets below, select **only** those that are somewhat related to T&E’s own *position or stance* on the topic "
         f"“{topic}”.\n\n"
         "Return a JSON list of the reference numbers that are relevant.\n\n"
         "Snippets:\n" + "\n\n".join(triage_chunks)
@@ -531,9 +530,9 @@ def position_timeline(
             "Using the provided snippets, compose a chronological timeline "
             "explaining how T&E’s **position** on the topic evolved. "
             "For each year, write 1-3 bullet points. "
-            "Format the answer in markdown with a title, bold highlights for years and key concepts, bullet points for the arguments and a highlight for the conclusion."
+            "Format the answer in markdown with highlights for headings, years, and bullet points."
             "When you cite, use the bracketed reference ids exactly as given "
-            "(e.g. [2022-3]). Finish with a one-sentence ‘Overall trajectory’ "
+            "(e.g. [2022-3]). Finish with a two-sentence ‘Overall trajectory’ "
             "summary.\n\n"
             "Snippets:\n" + "\n\n".join(ctx_blocks)
         )
@@ -553,15 +552,33 @@ def position_timeline(
     #   • Convert every “[YYYY-n]” used by the model into a foot-note marker
     #   • Keep only refs that are *actually present* in the text
     # ------------------------------------------------------------
-    ref_pattern = re.compile(r"\[(\d{4}-\d+)\]")
-    used_refs   = set(ref_pattern.findall(answer))
 
-    def to_footnote(match):
-        ref = match.group(1)
-        return f"[^{ref}]"
+    # ① recognise
+    #    • square OR round brackets
+    #    • single id  → [2016-19]
+    #    • lists      → [2016-19, 2016-20]  or  (2016-19,2016-20)
+    citation_rx = re.compile(
+        r'[\[\(]'                       # opening [ or (
+        r'(\d{4}-\d+(?:\s*,\s*\d{4}-\d+)*)'   # id or id,id,id…
+        r'[\]\)]'                       # closing ] or )
+    )
 
-    answer = ref_pattern.sub(to_footnote, answer)   # inline replacements
-    answer = answer.replace("][^", "], [^")         # ← NEW: add comma + space
+    # ② collect *all* ids that appear anywhere in the text
+    used_refs = {
+        ref.strip()
+        for grp in citation_rx.findall(answer)   # each grp may be "id, id, id"
+        for ref in grp.split(',')
+    }
+
+    # ③ replace every citation with foot-note markers
+    def repl(match: re.Match) -> str:
+        ids = [i.strip() for i in match.group(1).split(',')]
+        return ', '.join(f'[^{i}]' for i in ids)
+
+    answer = citation_rx.sub(repl, answer)
+
+    # ④ add comma+space if two foot-notes touch each other
+    answer = re.sub(r'\]\s*\[\^', '], [^', answer)
 
     # Build foot-note block in the order they appear
     footnotes = []
