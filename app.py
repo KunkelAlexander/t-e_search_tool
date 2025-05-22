@@ -73,8 +73,6 @@ if not st.session_state.initialized:
     st.session_state.update({"index": index, "embeddings": embeddings, "mapping": mapping, "pages": pages, "initialized": True})
 
 
-import streamlit as st
-
 def inject_theme_css():
     st.markdown(
         """
@@ -84,25 +82,42 @@ def inject_theme_css():
           /* light mode defaults */
           --card-bg       : #ffffff;
           --card-border   : #cccccc;
-
           --meta-colour   : #006621;  /* green */
           --link-colour   : #1a0dab;  /* Google‑blue */
           --snippet-colour: #4d5156;  /* grey */
+
+          --disclaimer-fg : black;
+          --disclaimer-bg : #fdf6e3;
+          --disclaimer-border : #f39c12;
         }
 
         @media (prefers-color-scheme: dark) {
           :root {
             --card-bg       : #262730;
             --card-border   : #3a3a3a;
-            --meta-colour   : #34a853;   /* lighter green */
-            --link-colour   : #8ab4f8;   /* Google‑blue on dark */
-            --snippet-colour: #e8eaed;   /* light grey */
+            --meta-colour   : #34a853;
+            --link-colour   : #8ab4f8;
+            --snippet-colour: #e8eaed;
+
+            --disclaimer-fg : white;
+            --disclaimer-bg : #333;
+            --disclaimer-border : #f39c12;
           }
+        }
+
+        /* Footer disclaimer style using tokens */
+        .custom-disclaimer {
+            color: var(--disclaimer-fg) !important;
+            background-color: var(--disclaimer-bg) !important;
+            border-left: 4px solid var(--disclaimer-border) !important;
+            padding: 1em;
+            border-radius: 5px;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
 
 inject_theme_css()
 
@@ -258,31 +273,11 @@ with tab_chat:
 
 
 
-
-
-
 # Footer
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     """
-    <style>
-    @media (prefers-color-scheme: dark) {
-        .custom-disclaimer {
-            color: white !important;
-            background-color: #333 !important;
-            border-left-color: #f39c12 !important;
-        }
-    }
-    @media (prefers-color-scheme: light) {
-        .custom-disclaimer {
-            color: black !important;
-            background-color: #fdf6e3 !important;
-            border-left-color: #f39c12 !important;
-        }
-    }
-    </style>
-
-    <div class="custom-disclaimer" style="padding: 1em; border-left: 4px solid #f39c12; border-radius: 5px;">
+    <div class="custom-disclaimer">
         <h4 style="margin-top: 0;">Disclaimer</h4>
         <p style="margin-bottom: 0.5em;">
             The information presented here, including any commentary or analysis, is based solely on publicly available sources.
