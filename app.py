@@ -231,7 +231,7 @@ def add_message(role: str, content: str):
     )
 
 with tab_chat:
-    if not get_api_key():
+    if not st.session_state.API_KEY:
         key = st.text_input(
             "🔑 Enter your OpenAI API key or password",
             type="password",
@@ -341,7 +341,7 @@ with tab_chrono:
 
 with tab_position:
 
-    if not get_api_key():
+    if not st.session_state.API_KEY:
         key = st.text_input(
             "🔑 Enter your OpenAI API key or password",
             type="password",
@@ -361,20 +361,33 @@ with tab_position:
 
         if run_timeline and topic_q:
             start = time.time()
-            timeline_md = search.position_timeline(
-                topic_q,
-                faiss_index   = st.session_state.index,
-                embeddings    = st.session_state.embeddings,
-                mapping_df    = st.session_state.mapping,
-                pages_df      = st.session_state.pages,
-                year2vec      = st.session_state.year2vec,
-                openai_api_key= get_api_key(),
-                alpha         = st.session_state.alpha,
-                max_snippet_length = st.session_state.max_snippet_length,
-                k_per_year    = st.session_state.position_hits,
-                min_score     = st.session_state.position_similarity / 100,
-            )
-            st.markdown(timeline_md, unsafe_allow_html=True)
+
+
+            try:
+                stream = search.position_timeline(
+                    topic_q,
+                    faiss_index   = st.session_state.index,
+                    embeddings    = st.session_state.embeddings,
+                    mapping_df    = st.session_state.mapping,
+                    pages_df      = st.session_state.pages,
+                    year2vec      = st.session_state.year2vec,
+                    openai_api_key= get_api_key(),
+                    alpha         = st.session_state.alpha,
+                    max_snippet_length = st.session_state.max_snippet_length,
+                    k_per_year    = st.session_state.position_hits,
+                    min_score     = st.session_state.position_similarity / 100,
+                )
+
+
+                # 2·3 stream tokens into the chat bubble
+                assistant_text = st.write_stream(stream) if stream else ""
+
+
+            # 3  handle a bad / missing key  (or any auth failure during the call)
+            except Exception as e:
+                assistant_text = f"❌ {e}\n\nPlease enter a valid key in the sidebar and try again."
+                st.error(assistant_text)
+
             st.caption(f"⏱️ {time.time()-start:.2f}s")
 
 # Footer

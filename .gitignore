@@ -9,3 +9,4 @@ hf_model_cache/
 hf_model_cache/models--sentence-transformers--all-mpnet-base-v2/
 embeddings/metadata_with_fulltext.csv
 deep_search.py
+.streamlit/secrets.toml

@@ -153,6 +153,9 @@ def search_pdfs(
     k      : int    – how many results
     alpha  : float  – 0 → ignore recency, >0 → exponential decay / year
     """
+
+    if query == "":
+        return []
     # ➊ embed & search
     q_vec = embeddings.embed_query(f"query: {query.lower()}")
 
@@ -418,7 +421,7 @@ def position_timeline(
         min_score: float = config.SIMILARITY_THRESHOLD,
         triage_model: str = config.TRIAGE_MODEL,
         timeline_model: str = config.TIMELINE_MODEL,
-) -> str:
+):
     """
     Return a fully-formed Markdown timeline answering
         “What is T&E’s position on <topic> and how did it change?”
@@ -471,32 +474,32 @@ def position_timeline(
         )
 
     # ---------- 3) triage with gpt-4.1-nano ----------
-    triage_chunks = []
-    for idx, h in enumerate(all_hits, start=1):
-        triage_chunks.append(
-            f"[{idx}] ({h['year']}) {h['title']}\n{h['snippet']}"
-        )
-
-    triage_prompt = (
-        "You are a policy analyst at Transport & Environment. "
-        "Given the snippets below, select **only** those that are somewhat related to T&E’s own *position or stance* on the topic "
-        f"“{topic}”.\n\n"
-        "Return a JSON list of the reference numbers that are relevant.\n\n"
-        "Snippets:\n" + "\n\n".join(triage_chunks)
-    )
-
-    triager = ChatOpenAI(
-        model_name=triage_model,
-        openai_api_key=openai_api_key,
-        temperature=1 if triage_model != "gpt-4o-mini" else 0
-    )
-    try:
-        triage_reply = triager.invoke([HumanMessage(content=triage_prompt)]).content
-        keep_ids = set(json.loads(triage_reply))
-    except Exception:
-        # fall back: keep everything
-        keep_ids = set(range(1, len(all_hits) + 1))
-
+    #triage_chunks = []
+    #for idx, h in enumerate(all_hits, start=1):
+    #    triage_chunks.append(
+    #        f"[{idx}] ({h['year']}) {h['title']}\n{h['snippet']}"
+    #    )
+#
+    #triage_prompt = (
+    #    "You are a policy analyst at Transport & Environment. "
+    #    "Given the snippets below, select **only** those that are somewhat related to T&E’s own *position or stance* on the topic "
+    #    f"“{topic}”.\n\n"
+    #    "Return a JSON list of the reference numbers that are relevant.\n\n"
+    #    "Snippets:\n" + "\n\n".join(triage_chunks)
+    #)
+#
+    #triager = ChatOpenAI(
+    #    model_name=triage_model,
+    #    openai_api_key=openai_api_key,
+    #    temperature=1 if triage_model != "gpt-4o-mini" else 0
+    #)
+    #try:
+    #    triage_reply = triager.invoke([HumanMessage(content=triage_prompt)]).content
+    #    keep_ids = set(json.loads(triage_reply))
+    #except Exception:
+    #    # fall back: keep everything
+    #    keep_ids = set(range(1, len(all_hits) + 1))
+    keep_ids = set(range(1, len(all_hits) + 1))
     kept_hits = [h for i, h in enumerate(all_hits, start=1) if i in keep_ids]
     if not kept_hits:
         return "No publication explicitly states T&E’s position on this topic."
@@ -527,10 +530,10 @@ def position_timeline(
     sys_ctx = SystemMessage(
         content=(
             "You are an expert policy summariser at Transport & Environment. "
-            "Using the provided snippets, compose a chronological timeline "
+            "Using the provided snippets, compose a chronological timeline from earlier to later"
             "explaining how T&E’s **position** on the topic evolved. "
             "For each year, write 1-3 bullet points. "
-            "Format the answer in markdown with highlights for headings, years, and bullet points."
+            "Format the answer in markdown with a title and highlights for headings, years, and bullet points."
             "When you cite, use the bracketed reference ids exactly as given "
             "(e.g. cite exactly like [2022-3] or [2022-3, 2024-5]). Finish with a two-sentence ‘Overall trajectory’ "
             "summary.\n\n"
@@ -538,15 +541,15 @@ def position_timeline(
         )
     )
 
-    writer = ChatOpenAI(
+    model = ChatOpenAI(
         model_name=timeline_model,
         openai_api_key=openai_api_key,
-        temperature=1 if timeline_model != "gpt-4o-mini" else 0
+        temperature=1 if timeline_model != "gpt-4o-mini" else 0,
+        streaming=True
     )
-    answer = writer.invoke([sys_ctx]).content
 
 
-# ------------------------------------------------------------
+    # ------------------------------------------------------------
     # 5)   POST-PROCESS: inline ↔︎ foot-note, build compact sources
     # ------------------------------------------------------------
     #   • Convert every “[YYYY-n]” used by the model into a foot-note marker
@@ -564,36 +567,36 @@ def position_timeline(
         r'[\]\)]'                         # closing ] or )
     )
 
+    used_refs = set()
+    buffer = ""
 
-    # ② collect *all* ids that appear anywhere in the text
-    used_refs = {
-        ref.strip()
-        for grp in citation_rx.findall(answer)   # each grp may be "id, id, id"
-        for ref in grp.split(',')
-    }
+    for chunk in model.stream([sys_ctx]):
+        token = chunk.content or ""
+        buffer += token
 
-    # ③ replace every citation with foot-note markers
-    def repl(match: re.Match) -> str:
-        ids = [i.strip() for i in match.group(1).split(',')]
-        return ', '.join(f'[^{i}]' for i in ids)
+        # Optionally: yield every sentence or newline
+        if any(p in buffer for p in [". ", "\n"]):
+            def replace_citations(text):
+                def repl(match):
+                    ids = [i.strip() for i in match.group(1).split(',')]
+                    used_refs.update(ids)
+                    return ', '.join(f'[^{i}]' for i in ids)
+                return citation_rx.sub(repl, text)
 
-    answer = citation_rx.sub(repl, answer)
+            to_yield = replace_citations(buffer)
+            yield to_yield
+            buffer = ""
 
-    # ④ add comma+space if two foot-notes touch each other
-    answer = re.sub(r'\]\s*\[\^', '], [^', answer)
+    # Final leftover buffer
+    if buffer:
+        yield citation_rx.sub(lambda m: ', '.join(f'[^{i.strip()}]' for i in m.group(1).split(',')), buffer)
 
-    # Build foot-note block in the order they appear
-    footnotes = []
+    # --- Yield footnotes ---
+    yield "\n\n---\n"
     for h in kept_hits:
         if h["ref"] in used_refs:
             link = h["url"] or h["pdf_url"] or "#"
-            footnotes.append(
-                f"[^{h['ref']}]:  {h['publication_date'] or ''} - [{h['title']}]({link}) — "
-                f"{h['publication_type']}"
-            )
+            yield f"[^{h['ref']}]:  {h['publication_date'] or ''} - [{h['title']}]({link}) — {h['publication_type']}\n"
 
-    if not footnotes:
-        footnotes.append("*The model did not cite any document explicitly.*")
-
-    final_md = answer + "\n\n---\n" + "\n".join(footnotes)
-    return final_md
+    if not used_refs:
+        yield "*The model did not cite any document explicitly.*"
