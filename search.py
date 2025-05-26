@@ -7,7 +7,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.chat_models import ChatOpenAI  # If using ChatOpenAI
 from langchain.schema import SystemMessage, HumanMessage, AIMessage
-from typing import Generator, List, Tuple
+from typing import Generator, List, Tuple, Dict, Any, Set
 from collections import defaultdict
 from operator   import itemgetter
 import json
@@ -389,21 +389,91 @@ def chat_rag(
         openai_api_key=openai_api_key,
         temperature=1 if llm_model != "gpt-4o-mini" else 0
     )
+    # ---------------------------------------------------------------------
+    # 4) Inline‑citation handling set‑up ----------------------------------
+    # ---------------------------------------------------------------------
+    # Map "1" -> docs[0], "2" -> docs[1] – used later to build foot‑notes
+    citations: Dict[str, Dict[str, Any]] = {str(i): d for i, d in enumerate(docs, 1)}
 
-    for token in model.stream(messages):
-        yield token
-    # --- 5) add sources if RAG was used -------------------------------------
-    if use_rag and docs:
-        yield "\n\n---\n\n**Sources:**\n\n"
-        for idx, result in enumerate(docs, start=1):
-            md = (
-                f"**[{idx}]. [{result.get('title','Untitled')}]({result.get('url','#')})**: [{result.get('pdf_url','Untitled')}]({result.get('pdf_url','#')}) - \n"
-                f"*{result.get('publication_type','Unknown')} – "
-                f"{result.get('publication_date','')} – "
-                f"{round(result['score']*100,1)}% match*  \n"
-                f"> {result.get('snippet','').strip()}  \n\n"
+    citation_rx = re.compile(
+        r"(?<!\[\^)"              # ignore already‑converted footnotes
+        r"[\[(]"                   # opening [ or (
+        r"("                        # capture group 1 = the id list
+        r"(?:\d{4}-\d+|\d+)"      #   • either YYYY‑n   or   plain integer
+        r"(?:\s*,\s*(?:\d{4}-\d+|\d+))*"  #   • optionally more, comma‑separated
+        r")"
+        r"[\])]"                   # closing ] or )
+    )
+
+    # Detect two foot‑note markers without anything in‑between and insert a comma
+    adjacent_fn_rx = re.compile(r"(\[\^[^\]]+\])(\s*)(?=\[\^[^\]]+\])")
+
+    used_refs: Set[str] = set()
+    buffer: str = ""
+
+    # ---------------------------------------------------------------------
+    # 5) Token‑stream loop -------------------------------------------------
+    # ---------------------------------------------------------------------
+    for chunk in model.stream(messages):
+        token = chunk.content or ""
+        buffer += token
+
+        # Flush whenever we likely hit sentence end or explicit newline
+        if any(sep in buffer for sep in (". ", "\n")):
+
+            def _repl(match: re.Match) -> str:
+                ids = [i.strip() for i in match.group(1).split(",")]
+                used_refs.update(ids)
+                # separate multiple ids *inside* one reference by comma+space
+                return " ".join(f"[^{i}]" for i in ids)
+
+            # ① convert inline lists → foot‑note markers
+            chunk_txt = citation_rx.sub(_repl, buffer)
+            # ② ensure *adjacent* markers get a comma as well
+            chunk_txt = adjacent_fn_rx.sub(lambda m: f"{m.group(1)}, ", chunk_txt)
+            yield chunk_txt
+            buffer = ""
+
+    # Emit any leftover fragment
+    if buffer:
+        chunk_txt = citation_rx.sub(
+            lambda m: ", ".join(f"[^{i.strip()}]" for i in m.group(1).split(",")),
+            buffer,
+        )
+        chunk_txt = adjacent_fn_rx.sub(lambda m: f"{m.group(1)}, ", chunk_txt)
+        yield chunk_txt
+
+    # ---------------------------------------------------------------------
+    # 6) FOOT‑NOTE section -------------------------------------------------
+    # ---------------------------------------------------------------------
+    yield "\n\n---\n\n"
+    if used_refs:
+        # Stable order: numeric integer refs first, then YYYY‑n sorted
+        def _sort_key(r: str):
+            if "-" in r:
+                y, n = r.split("-", 1)
+                return int(y) * 10000 + int(n)  # crude but fine
+            return int(r)
+
+        for ref in sorted(used_refs, key=_sort_key):
+            doc = citations.get(ref) or next(
+                (d for d in docs if d.get("ref") == ref), None
             )
-            yield md
+            if doc:
+                link = doc.get("url") or doc.get("pdf_url") or "#"
+                snippet = doc.get("snippet", "").replace("\n", " ").strip()
+                yield (
+                    f"[^{ref}]:  {doc.get('publication_date', '')} – "
+                    f"[{doc.get('title', 'Untitled')}]({link}) — "
+                    f"{doc.get('publication_type', 'Unknown')} — \n"
+                    f"*{snippet}*\n"
+                )
+            else:
+                # safety: unmatched id
+                yield f"[^{ref}]:  *missing reference*\n"
+    else:
+        yield "*The model did not cite any document explicitly.*"
+
 
 
 def position_timeline(
@@ -596,7 +666,13 @@ def position_timeline(
     for h in kept_hits:
         if h["ref"] in used_refs:
             link = h["url"] or h["pdf_url"] or "#"
-            yield f"[^{h['ref']}]:  {h['publication_date'] or ''} - [{h['title']}]({link}) — {h['publication_type']}\n"
+            snippet = h.get("snippet", "").replace("\n", " ").strip()
+            yield (
+                f"[^{h['ref']}]:  {h.get('publication_date', '')} – "
+                f"[{h.get('title', 'Untitled')}]({link}) — "
+                f"{h.get('publication_type', 'Unknown')} — \n"
+                f"*{snippet}*\n"
+            )
 
     if not used_refs:
         yield "*The model did not cite any document explicitly.*"
