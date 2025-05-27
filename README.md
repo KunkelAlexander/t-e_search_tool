@@ -13,7 +13,7 @@ It couples a **FAISS** vector store with a **Streamlit** UI that offers both RAG
 
 | Area | Highlights |
 |------|------------|
-| **Semantic Search** | • Sentence‑Transformer embeddings ('multilingual-e5-small') <br>• Optional exponential **date‑decay** weighting so fresh material floats to the top |
+| **Semantic Search** | • Sentence‑Transformer embeddings ('multilingual-e5-small') with multi-language support <br>• Optional exponential **date‑decay** weighting so fresh material floats to the top |
 | **Storage** | • FAISS HNSW index for millisecond retrieval<br>• All vectors + metadata **persisted** on disk |
 | **Streamlit Front‑End** | • Responsive two‑tab layout – **Search** & **Chat**<br>• Clickable results with similarity colouring<br>• Floating chat bar, expert settings sliders |
 | **Retrieval‑Augmented Chat (RAG)** | • Router decides when to query the corpus<br>• Sources block with inline `[1]` citations |
@@ -94,10 +94,8 @@ figures/            screenshots / GIFs
 
 ## 🌱 Roadmap
 
-* Hybrid semantic + keyword search
 * Faceted filters (author, year, tag) in the UI
 * Scheduled crawler to auto‑ingest new publications
-* Multi‑language support
 
 ---
 
