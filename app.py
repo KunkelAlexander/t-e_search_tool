@@ -193,10 +193,11 @@ tab_chat, tab_search, tab_chrono, tab_position = st.tabs(["💬 Chat", "❓Searc
 
 with tab_search:
     # --- Search Bar ---
-    query = st.text_input("Enter your query:", placeholder="Type a sentence or keywords...")
+    query = st.text_input("Enter your query:", key="search_query", placeholder="Type a sentence or keywords...")
 
     # --- Perform Search ---
     if query:
+        print("Performing search")
         st.write(f"#### Results for: `{query}`")
 
         # Start timing
@@ -257,6 +258,7 @@ with tab_chat:
 
 
         if user_prompt:
+            print("Performing chat")
             # 1 ▸ show it & store
             with chat_container:
                 with st.chat_message("user"):
@@ -304,6 +306,7 @@ with tab_chrono:
     chrono_q = st.text_input("Enter your query:", key="chrono_query")
 
     if chrono_q:
+        print("Performing chrono")
         st.write(f"#### Chronological results for: `{chrono_q}`")
         t0 = time.time()
 
@@ -352,6 +355,8 @@ with tab_position:
             st.success("✅ API key saved!")
             st.rerun()
     else:
+
+
         topic_q = st.text_input(
             "What T&E position would you like to trace?",
             placeholder="e.g. indirect land-use change"
@@ -360,35 +365,37 @@ with tab_position:
         run_timeline = st.button("🔄 Generate timeline", key="run_timeline")
 
         if run_timeline and topic_q:
-            start = time.time()
+            with st.spinner("Generating timeline..."):
+                print("Performing position")
+                start = time.time()
 
 
-            try:
-                stream = search.position_timeline(
-                    topic_q,
-                    faiss_index   = st.session_state.index,
-                    embeddings    = st.session_state.embeddings,
-                    mapping_df    = st.session_state.mapping,
-                    pages_df      = st.session_state.pages,
-                    year2vec      = st.session_state.year2vec,
-                    openai_api_key= get_api_key(),
-                    alpha         = st.session_state.alpha,
-                    max_snippet_length = st.session_state.max_snippet_length,
-                    k_per_year    = st.session_state.position_hits,
-                    min_score     = st.session_state.position_similarity / 100,
-                )
+                try:
+                    stream = search.position_timeline(
+                        topic_q,
+                        faiss_index   = st.session_state.index,
+                        embeddings    = st.session_state.embeddings,
+                        mapping_df    = st.session_state.mapping,
+                        pages_df      = st.session_state.pages,
+                        year2vec      = st.session_state.year2vec,
+                        openai_api_key= get_api_key(),
+                        alpha         = st.session_state.alpha,
+                        max_snippet_length = st.session_state.max_snippet_length,
+                        k_per_year    = st.session_state.position_hits,
+                        min_score     = st.session_state.position_similarity / 100,
+                    )
 
 
-                # 2·3 stream tokens into the chat bubble
-                assistant_text = st.write_stream(stream) if stream else ""
+                    # 2·3 stream tokens into the chat bubble
+                    assistant_text = st.write_stream(stream) if stream else ""
 
 
-            # 3  handle a bad / missing key  (or any auth failure during the call)
-            except Exception as e:
-                assistant_text = f"❌ {e}\n\nPlease enter a valid key in the sidebar and try again."
-                st.error(assistant_text)
+                # 3  handle a bad / missing key  (or any auth failure during the call)
+                except Exception as e:
+                    assistant_text = f"❌ {e}\n\nPlease enter a valid key in the sidebar and try again."
+                    st.error(assistant_text)
 
-            st.caption(f"⏱️ {time.time()-start:.2f}s")
+                st.caption(f"⏱️ {time.time()-start:.2f}s")
 
 # Footer
 st.sidebar.markdown("---")
