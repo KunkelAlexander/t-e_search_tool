@@ -436,10 +436,7 @@ def chat_rag(
 
     # Emit any leftover fragment
     if buffer:
-        chunk_txt = citation_rx.sub(
-            lambda m: ", ".join(f"[^{i.strip()}]" for i in m.group(1).split(",")),
-            buffer,
-        )
+        chunk_txt = citation_rx.sub(_repl, buffer)
         chunk_txt = adjacent_fn_rx.sub(lambda m: f"{m.group(1)}, ", chunk_txt)
         yield chunk_txt
 
@@ -503,16 +500,7 @@ def position_timeline(
       3. triage hits with a cheap model
       4. big model writes the chronology
     """
-    # ---------- 1) router ----------
-    use_rag, search_query = decide_rag(
-        topic,                       # user prompt
-        history=[],                  # no chat
-        max_query_tokens=32,
-        openai_api_key=openai_api_key,
-    )
-    # we *always* want RAG here, but decide_rag also disambiguates the query
-    if not use_rag:
-        search_query = topic
+    search_query = topic
 
     # ---------- 2) gather hits per year ----------
     now_year = datetime.now().year
@@ -544,32 +532,31 @@ def position_timeline(
         )
 
     # ---------- 3) triage with gpt-4.1-nano ----------
-    #triage_chunks = []
-    #for idx, h in enumerate(all_hits, start=1):
-    #    triage_chunks.append(
-    #        f"[{idx}] ({h['year']}) {h['title']}\n{h['snippet']}"
-    #    )
+    triage_chunks = []
+    for idx, h in enumerate(all_hits, start=1):
+        triage_chunks.append(
+            f"[{idx}] ({h['year']}) {h['title']}\n{h['snippet']}"
+        )
 #
-    #triage_prompt = (
-    #    "You are a policy analyst at Transport & Environment. "
-    #    "Given the snippets below, select **only** those that are somewhat related to T&E’s own *position or stance* on the topic "
-    #    f"“{topic}”.\n\n"
-    #    "Return a JSON list of the reference numbers that are relevant.\n\n"
-    #    "Snippets:\n" + "\n\n".join(triage_chunks)
-    #)
+    triage_prompt = (
+        "You are a policy analyst at Transport & Environment. "
+        "Given the snippets below, select **only** those that are somewhat related to T&E’s own *position or stance* on the topic "
+        f"“{topic}”.\n\n"
+        "Return a JSON list of the reference numbers that are relevant.\n\n"
+        "Snippets:\n" + "\n\n".join(triage_chunks)
+    )
 #
-    #triager = ChatOpenAI(
-    #    model_name=triage_model,
-    #    openai_api_key=openai_api_key,
-    #    temperature=1 if triage_model != "gpt-4o-mini" else 0
-    #)
-    #try:
-    #    triage_reply = triager.invoke([HumanMessage(content=triage_prompt)]).content
-    #    keep_ids = set(json.loads(triage_reply))
-    #except Exception:
-    #    # fall back: keep everything
-    #    keep_ids = set(range(1, len(all_hits) + 1))
-    keep_ids = set(range(1, len(all_hits) + 1))
+    triager = ChatOpenAI(
+        model_name=triage_model,
+        openai_api_key=openai_api_key,
+        temperature=1 if triage_model != "gpt-4o-mini" else 0
+    )
+    try:
+        triage_reply = triager.invoke([HumanMessage(content=triage_prompt)]).content
+        keep_ids = set(json.loads(triage_reply))
+    except Exception:
+        # fall back: keep everything
+        keep_ids = set(range(1, len(all_hits) + 1))
     kept_hits = [h for i, h in enumerate(all_hits, start=1) if i in keep_ids]
     if not kept_hits:
         return "No publication explicitly states T&E’s position on this topic."
@@ -636,30 +623,28 @@ def position_timeline(
         r'(\d{4}-\d+(?:\s*,\s*\d{4}-\d+)*)'
         r'[\]\)]'                         # closing ] or )
     )
-
     used_refs = set()
     buffer = ""
 
+    def replace_citations(text: str) -> str:
+        def repl(match):
+            ids = [i.strip() for i in match.group(1).split(',')]
+            used_refs.update(ids)
+            return ', '.join(f'[^{i}]' for i in ids)
+        return citation_rx.sub(repl, text)
+
+    # Stream and process output
     for chunk in model.stream([sys_ctx]):
         token = chunk.content or ""
         buffer += token
 
-        # Optionally: yield every sentence or newline
         if any(p in buffer for p in [". ", "\n"]):
-            def replace_citations(text):
-                def repl(match):
-                    ids = [i.strip() for i in match.group(1).split(',')]
-                    used_refs.update(ids)
-                    return ', '.join(f'[^{i}]' for i in ids)
-                return citation_rx.sub(repl, text)
-
-            to_yield = replace_citations(buffer)
-            yield to_yield
+            yield replace_citations(buffer)
             buffer = ""
 
-    # Final leftover buffer
+    # Final flush
     if buffer:
-        yield citation_rx.sub(lambda m: ', '.join(f'[^{i.strip()}]' for i in m.group(1).split(',')), buffer)
+        yield replace_citations(buffer)
 
     # --- Yield footnotes ---
     yield "\n\n---\n"
