@@ -7,12 +7,14 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.chat_models import ChatOpenAI  # If using ChatOpenAI
 from langchain.schema import SystemMessage, HumanMessage, AIMessage
-from typing import Generator, List, Tuple, Dict, Any, Set
+from typing import Generator, List, Tuple, Dict, Any, Set, Iterator
 from collections import defaultdict
 from operator   import itemgetter
 import json
 import random
 import re
+
+import hashlib
 
 SPINNER_MESSAGES = [
     "Tuning quantum flux capacitors…",
@@ -249,6 +251,66 @@ def search_pdfs(
     return merge_snippets(results, max_snippets_per_doc=10)
 
 
+def make_search_cache_key(
+    query: str,
+    k: int,
+    alpha: float,
+    max_snippet_length: int,
+    threshold: float,
+    year: int | None
+) -> str:
+    raw = f"{query}|{k}|{alpha}|{max_snippet_length}|{threshold}|{year}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def cached_search_results(cache_key: str) -> list[dict] | None:
+    return st.session_state.get("search_cache", {}).get(cache_key)
+
+def store_search_results(cache_key: str, results: list[dict]):
+    cached = st.session_state.get("search_cache", {})
+    cached[cache_key] = results
+    st.session_state["search_cache"] = cached
+
+def search_pdfs_cached(
+        query: str,
+        faiss_index,
+        embeddings,
+        mapping_df: pd.DataFrame,
+        pages_df: pd.DataFrame,
+        *,
+        k: int = config.SEARCH_RESULT_K,
+        alpha: float = 0.0,
+        max_snippet_length: int = 500,
+        threshold: float = 0.0,
+        year2vec: dict[int, np.ndarray] | None  = None,
+        year: int | None = None
+    ) -> list[dict]:
+    if not query:
+        return []
+
+    cache_key = make_search_cache_key(query, k, alpha, max_snippet_length, threshold, year)
+    cached = cached_search_results(cache_key)
+    if cached:
+        return cached
+    else:
+        results = search_pdfs(
+            query,
+            faiss_index,
+            embeddings,
+            mapping_df,
+            pages_df,
+            k=k,
+            alpha=alpha,
+            max_snippet_length=max_snippet_length,
+            threshold=threshold,
+            year2vec=year2vec,
+            year=year,
+        )
+
+        store_search_results(cache_key, results)
+        return results
+
+
 
 def decide_rag(
     prompt: str,
@@ -306,6 +368,86 @@ def decide_rag(
         # fail safe: default to RAG with the raw prompt
         return True, prompt
 
+
+
+def yield_answer_with_citations(
+    model, messages, docs: List[Dict[str, Any]]
+) -> Iterator[str]:
+    # Detect citations
+    citation_rx = re.compile(
+        r"(?<!\[\^)"              # ignore already‑converted footnotes
+        r"[\[(]"                   # opening [ or (
+        r"("                        # capture group 1 = the id list
+        r"(?:\d{4}-\d+|\d+)"      #   • either YYYY‑n   or   plain integer
+        r"(?:\s*,\s*(?:\d{4}-\d+|\d+))*"  #   • optionally more, comma‑separated
+        r")"
+        r"[\])]"                   # closing ] or )
+    )
+
+    # Detect two foot‑note markers without anything in‑between and insert a comma
+    adjacent_fn_rx = re.compile(r"(\[\^[^\]]+\])(\s*)(?=\[\^[^\]]+\])")
+
+
+    # ---------------------------------------------------------------------
+    # 4) Inline‑citation handling set‑up ----------------------------------
+    # ---------------------------------------------------------------------
+    citations: Dict[str, Dict[str, Any]] = {str(i): d for i, d in enumerate(docs, 1)}
+    used_refs: Set[str] = set()
+    buffer: str = ""
+
+    # ---------------------------------------------------------------------
+    # 5) Token‑stream loop -------------------------------------------------
+    # ---------------------------------------------------------------------
+
+    def _repl(match: re.Match) -> str:
+        ids = [i.strip() for i in match.group(1).split(",")]
+        used_refs.update(ids)
+        return " ".join(f"[^{i}]" for i in ids)
+
+    for chunk in model.stream(messages):
+        token = chunk.content or ""
+        buffer += token
+
+        if any(sep in buffer for sep in (". ", "\n")):
+            chunk_txt = citation_rx.sub(_repl, buffer)
+            chunk_txt = adjacent_fn_rx.sub(lambda m: f"{m.group(1)}, ", chunk_txt)
+            yield chunk_txt
+            buffer = ""
+
+    if buffer:
+        chunk_txt = citation_rx.sub(_repl, buffer)
+        chunk_txt = adjacent_fn_rx.sub(lambda m: f"{m.group(1)}, ", chunk_txt)
+        yield chunk_txt
+
+    # ---------------------------------------------------------------------
+    # 6) FOOT‑NOTE section -------------------------------------------------
+    # ---------------------------------------------------------------------
+    yield "\n\n---\n\n"
+    if used_refs:
+        def _sort_key(r: str):
+            if "-" in r:
+                y, n = r.split("-", 1)
+                return int(y) * 10000 + int(n)
+            return int(r)
+
+        for ref in sorted(used_refs, key=_sort_key):
+            doc = citations.get(ref) or next(
+                (d for d in docs if d.get("ref") == ref), None
+            )
+            if doc:
+                link = doc.get("url") or doc.get("pdf_url") or "#"
+                snippet = doc.get("snippet", "").replace("\n", " ").strip()
+                yield (
+                    f"[^{ref}]:  {doc.get('publication_date', '')} – "
+                    f"[{doc.get('title', 'Untitled')}]({link}) — "
+                    f"{doc.get('publication_type', 'Unknown')} — \n"
+                    f"*{snippet}*\n"
+                )
+            else:
+                yield f"[^{ref}]:  *missing reference*\n"
+    else:
+        yield "*The model did not cite any document explicitly.*"
+
 # ───────────────────────────────────────────────────────────────
 # 1 ▸ main public function
 # ───────────────────────────────────────────────────────────────
@@ -336,7 +478,7 @@ def chat_rag(
 
     # --- 2) retrieval if needed ---------------------------------------------
     if use_rag:
-        docs = search_pdfs(
+        docs = search_pdfs_cached(
             search_query,
             faiss_index,
             embeddings,
@@ -389,89 +531,10 @@ def chat_rag(
         openai_api_key=openai_api_key,
         temperature=1 if llm_model != "gpt-4o-mini" else 0
     )
-    # ---------------------------------------------------------------------
-    # 4) Inline‑citation handling set‑up ----------------------------------
-    # ---------------------------------------------------------------------
-    # Map "1" -> docs[0], "2" -> docs[1] – used later to build foot‑notes
-    citations: Dict[str, Dict[str, Any]] = {str(i): d for i, d in enumerate(docs, 1)}
 
-    citation_rx = re.compile(
-        r"(?<!\[\^)"              # ignore already‑converted footnotes
-        r"[\[(]"                   # opening [ or (
-        r"("                        # capture group 1 = the id list
-        r"(?:\d{4}-\d+|\d+)"      #   • either YYYY‑n   or   plain integer
-        r"(?:\s*,\s*(?:\d{4}-\d+|\d+))*"  #   • optionally more, comma‑separated
-        r")"
-        r"[\])]"                   # closing ] or )
-    )
-
-    # Detect two foot‑note markers without anything in‑between and insert a comma
-    adjacent_fn_rx = re.compile(r"(\[\^[^\]]+\])(\s*)(?=\[\^[^\]]+\])")
-
-    used_refs: Set[str] = set()
-    buffer: str = ""
-
-    # ---------------------------------------------------------------------
-    # 5) Token‑stream loop -------------------------------------------------
-    # ---------------------------------------------------------------------
-    for chunk in model.stream(messages):
-        token = chunk.content or ""
-        buffer += token
-
-        # Flush whenever we likely hit sentence end or explicit newline
-        if any(sep in buffer for sep in (". ", "\n")):
-
-            def _repl(match: re.Match) -> str:
-                ids = [i.strip() for i in match.group(1).split(",")]
-                used_refs.update(ids)
-                # separate multiple ids *inside* one reference by comma+space
-                return " ".join(f"[^{i}]" for i in ids)
-
-            # ① convert inline lists → foot‑note markers
-            chunk_txt = citation_rx.sub(_repl, buffer)
-            # ② ensure *adjacent* markers get a comma as well
-            chunk_txt = adjacent_fn_rx.sub(lambda m: f"{m.group(1)}, ", chunk_txt)
-            yield chunk_txt
-            buffer = ""
-
-    # Emit any leftover fragment
-    if buffer:
-        chunk_txt = citation_rx.sub(_repl, buffer)
-        chunk_txt = adjacent_fn_rx.sub(lambda m: f"{m.group(1)}, ", chunk_txt)
-        yield chunk_txt
-
-    # ---------------------------------------------------------------------
-    # 6) FOOT‑NOTE section -------------------------------------------------
-    # ---------------------------------------------------------------------
-    yield "\n\n---\n\n"
-    if used_refs:
-        # Stable order: numeric integer refs first, then YYYY‑n sorted
-        def _sort_key(r: str):
-            if "-" in r:
-                y, n = r.split("-", 1)
-                return int(y) * 10000 + int(n)  # crude but fine
-            return int(r)
-
-        for ref in sorted(used_refs, key=_sort_key):
-            doc = citations.get(ref) or next(
-                (d for d in docs if d.get("ref") == ref), None
-            )
-            if doc:
-                link = doc.get("url") or doc.get("pdf_url") or "#"
-                snippet = doc.get("snippet", "").replace("\n", " ").strip()
-                yield (
-                    f"[^{ref}]:  {doc.get('publication_date', '')} – "
-                    f"[{doc.get('title', 'Untitled')}]({link}) — "
-                    f"{doc.get('publication_type', 'Unknown')} — \n"
-                    f"*{snippet}*\n"
-                )
-            else:
-                # safety: unmatched id
-                yield f"[^{ref}]:  *missing reference*\n"
-    else:
-        yield "*The model did not cite any document explicitly.*"
-
-
+    # Stream and parse with citations
+    for chunk in yield_answer_with_citations(model, messages, docs):
+        yield chunk
 
 def position_timeline(
         topic: str,
@@ -508,7 +571,7 @@ def position_timeline(
     all_hits: list[dict] = []
 
     for yr in sorted(years, reverse=True):        # newest → oldest
-        hits = search_pdfs(
+        hits = search_pdfs_cached(
             search_query,
             faiss_index   = faiss_index,
             embeddings    = embeddings,
@@ -569,12 +632,13 @@ def position_timeline(
             grouped[h["year"]].append(h)
 
     # ---------- 4) build context and let the big model write ----------
+    docs = []
     ctx_blocks = []
     ref_map = {}                      # map global ref → markdown link
     global_idx = 1
     for yr in sorted(grouped, reverse=True):
         for h in grouped[yr]:
-            ref = f"{yr}-{global_idx}"
+            ref = f"{global_idx}"
             ref_map[ref] = (
                 f"[{h['title']}]({h['url'] or h['pdf_url'] or '#'})"
             )
@@ -582,6 +646,7 @@ def position_timeline(
                 f"[{ref}] ({yr}) {h['title']}\n{h['snippet']}"
             )
             h["ref"] = ref
+            docs.append(h)
             global_idx += 1
 
     sys_ctx = SystemMessage(
@@ -591,12 +656,14 @@ def position_timeline(
             "explaining how T&E’s **position** on the topic evolved. "
             "For each year, write 1-3 bullet points. "
             "Format the answer in markdown with a title and highlights for headings, years, and bullet points."
-            "When you cite, use the bracketed reference ids exactly as given "
-            "(e.g. cite exactly like [2022-3] or [2022-3, 2024-5]). Finish with a two-sentence ‘Overall trajectory’ "
+            "When you quote or paraphrase, add bracketed numbers like [1]."
+            "Finish with a two-sentence summary explaining whether the position has changed significantly or not."
             "summary.\n\n"
             "Snippets:\n" + "\n\n".join(ctx_blocks)
         )
     )
+
+    messages = [sys_ctx]
 
     model = ChatOpenAI(
         model_name=timeline_model,
@@ -606,58 +673,27 @@ def position_timeline(
     )
 
 
-    # ------------------------------------------------------------
-    # 5)   POST-PROCESS: inline ↔︎ foot-note, build compact sources
-    # ------------------------------------------------------------
-    #   • Convert every “[YYYY-n]” used by the model into a foot-note marker
-    #   • Keep only refs that are *actually present* in the text
-    # ------------------------------------------------------------
+    # Stream and parse with citations
+    for chunk in yield_answer_with_citations(model, messages, docs):
+        yield chunk
 
-    # ① recognise
-    #    • square OR round brackets
-    #    • single id  → [2016-19]
-    #    • lists      → [2016-19, 2016-20]  or  (2016-19,2016-20)
-    citation_rx = re.compile(
-        r'(?<!\[\^)'                       # negative lookbehind to exclude existing footnotes
-        r'[\[\(]'                         # opening [ or (
-        r'(\d{4}-\d+(?:\s*,\s*\d{4}-\d+)*)'
-        r'[\]\)]'                         # closing ] or )
-    )
-    used_refs = set()
-    buffer = ""
 
-    def replace_citations(text: str) -> str:
-        def repl(match):
-            ids = [i.strip() for i in match.group(1).split(',')]
-            used_refs.update(ids)
-            return ', '.join(f'[^{i}]' for i in ids)
-        return citation_rx.sub(repl, text)
+def make_timeline_cache_key(
+    topic: str,
+    alpha: float,
+    max_snippet_length: int,
+    k_per_year: int,
+    min_score: float,
+    triage_model: str,
+    timeline_model: str
+) -> str:
+    raw = f"{topic}|{alpha}|{max_snippet_length}|{k_per_year}|{min_score}|{triage_model}|{timeline_model}"
+    return hashlib.sha256(raw.encode()).hexdigest()
 
-    # Stream and process output
-    for chunk in model.stream([sys_ctx]):
-        token = chunk.content or ""
-        buffer += token
+def get_cached_timeline(cache_key: str) -> str | None:
+    return st.session_state.get("timeline_cache", {}).get(cache_key)
 
-        if any(p in buffer for p in [". ", "\n"]):
-            yield replace_citations(buffer)
-            buffer = ""
-
-    # Final flush
-    if buffer:
-        yield replace_citations(buffer)
-
-    # --- Yield footnotes ---
-    yield "\n\n---\n"
-    for h in kept_hits:
-        if h["ref"] in used_refs:
-            link = h["url"] or h["pdf_url"] or "#"
-            snippet = h.get("snippet", "").replace("\n", " ").strip()
-            yield (
-                f"[^{h['ref']}]:  {h.get('publication_date', '')} – "
-                f"[{h.get('title', 'Untitled')}]({link}) — "
-                f"{h.get('publication_type', 'Unknown')} — \n"
-                f"*{snippet}*\n"
-            )
-
-    if not used_refs:
-        yield "*The model did not cite any document explicitly.*"
+def store_timeline(cache_key: str, timeline: str):
+    cached = st.session_state.get("timeline_cache", {})
+    cached[cache_key] = timeline
+    st.session_state["timeline_cache"] = cached

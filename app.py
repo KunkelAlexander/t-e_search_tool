@@ -197,13 +197,12 @@ with tab_search:
 
     # --- Perform Search ---
     if query:
-        print("Performing search")
         st.write(f"#### Results for: `{query}`")
 
         # Start timing
-        start_time = time.time()
+        t0 = time.time()
 
-        results = search.search_pdfs(
+        results = search.search_pdfs_cached(
             query,
             st.session_state.index,
             st.session_state.embeddings,
@@ -214,17 +213,13 @@ with tab_search:
             max_snippet_length = st.session_state.max_snippet_length
         )
 
-        # End timing
-        end_time = time.time()
-        elapsed_time = end_time - start_time  # Calculate elapsed time
-
-        print(f"🔍 Search completed in **{elapsed_time:.2f} seconds**")
-
         if results:
             for result in results:
                 display_result(result)
         else:
             st.write("No results found.")
+
+        st.caption(f"⏱️ {time.time() - t0:.2f}s")
 
 def add_message(role: str, content: str):
     st.session_state.chat_history.append(
@@ -258,7 +253,8 @@ with tab_chat:
 
 
         if user_prompt:
-            print("Performing chat")
+            t0 = time.time()
+
             # 1 ▸ show it & store
             with chat_container:
                 with st.chat_message("user"):
@@ -302,19 +298,23 @@ with tab_chat:
             add_message("assistant", assistant_text)
 
 
+            st.caption(f"⏱️ {time.time() - t0:.2f}s")
+
+
 with tab_chrono:
     chrono_q = st.text_input("Enter your query:", key="chrono_query")
 
     if chrono_q:
-        print("Performing chrono")
         st.write(f"#### Chronological results for: `{chrono_q}`")
         t0 = time.time()
 
         # newest → oldest
         years = sorted(st.session_state.year2vec.keys(), reverse=True)
         any_hit = False
+
+        # Caching the whole output of this loop did not turn out to be faster than called search_pdfs_cached
         for yr in years:
-            hits = search.search_pdfs(
+            hits = search.search_pdfs_cached(
                 chrono_q,
                 faiss_index   = st.session_state.index,
                 embeddings    = st.session_state.embeddings,
@@ -362,40 +362,54 @@ with tab_position:
             placeholder="e.g. indirect land-use change"
         )
 
-        run_timeline = st.button("🔄 Generate timeline", key="run_timeline")
+        if topic_q:
 
-        if run_timeline and topic_q:
-            with st.spinner("Generating timeline..."):
-                print("Performing position")
-                start = time.time()
+            start = time.time()
 
-
-                try:
-                    stream = search.position_timeline(
-                        topic_q,
-                        faiss_index   = st.session_state.index,
-                        embeddings    = st.session_state.embeddings,
-                        mapping_df    = st.session_state.mapping,
-                        pages_df      = st.session_state.pages,
-                        year2vec      = st.session_state.year2vec,
-                        openai_api_key= get_api_key(),
-                        alpha         = st.session_state.alpha,
-                        max_snippet_length = st.session_state.max_snippet_length,
-                        k_per_year    = st.session_state.position_hits,
-                        min_score     = st.session_state.position_similarity / 100,
-                    )
+            cache_key = search.make_timeline_cache_key(
+                topic_q,
+                st.session_state.alpha,
+                st.session_state.max_snippet_length,
+                st.session_state.position_hits,
+                st.session_state.position_similarity / 100,
+                config.TRIAGE_MODEL,
+                config.TIMELINE_MODEL,
+            )
 
 
-                    # 2·3 stream tokens into the chat bubble
-                    assistant_text = st.write_stream(stream) if stream else ""
+            cached = search.get_cached_timeline(cache_key)
+            if cached:
+                assistant_text = st.write(cached)  # no need to stream
+                print("Timeline cached")
+            else:
+                print("Timeline not cached")
+                with st.spinner("Generating timeline..."):
+                    try:
+                        stream = search.position_timeline(
+                            topic_q,
+                            faiss_index        = st.session_state.index,
+                            embeddings         = st.session_state.embeddings,
+                            mapping_df         = st.session_state.mapping,
+                            pages_df           = st.session_state.pages,
+                            year2vec           = st.session_state.year2vec,
+                            openai_api_key     = get_api_key(),
+                            alpha              = st.session_state.alpha,
+                            max_snippet_length = st.session_state.max_snippet_length,
+                            k_per_year         = st.session_state.position_hits,
+                            min_score          = st.session_state.position_similarity / 100,
+                        )
+
+                        # 2·3 stream tokens into the chat bubble
+                        assistant_text = st.write_stream(stream) if stream else ""
+                        search.store_timeline(cache_key, assistant_text)
 
 
-                # 3  handle a bad / missing key  (or any auth failure during the call)
-                except Exception as e:
-                    assistant_text = f"❌ {e}\n\nPlease enter a valid key in the sidebar and try again."
-                    st.error(assistant_text)
+                    # 3  handle a bad / missing key  (or any auth failure during the call)
+                    except Exception as e:
+                        assistant_text = f"❌ {e}\n\nIf this is about authentification, please enter a valid key in the sidebar and try again."
+                        st.error(assistant_text)
 
-                st.caption(f"⏱️ {time.time()-start:.2f}s")
+            st.caption(f"⏱️ {time.time()-start:.2f}s")
 
 # Footer
 st.sidebar.markdown("---")
