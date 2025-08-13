@@ -30,7 +30,7 @@ _init_state({
     "max_snippet_length": 1500,
     "n_search_results": 10,
     "API_KEY": None,
-    "selected_model": "gpt-4o-mini",
+    "selected_model": config.DEFAULT_MODEL,
     "chat_history": [],
     "n_chrono_search_results": 3,
     "chrono_similarity_threshold": 75

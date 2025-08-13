@@ -57,6 +57,13 @@ def initialize_search_index(openai_api_key: str | None = None):
 
     # --- convenience column so we don't have to re-parse later -------------
     def _parse_year(date_str):
+        
+        # Try fast ISO parsing first
+        try:
+            return datetime.fromisoformat(date_str).year
+        except ValueError:
+            pass
+
         for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S",
                     "%B %d, %Y, %I:%M:%S %p", "%B %d, %Y",
                     "%b %d, %Y, %I:%M:%S %p"):
@@ -356,7 +363,7 @@ def decide_rag(
     messages = hist_msgs + [sys, HumanMessage(content=prompt)]
 
     router = ChatOpenAI(
-        model_name="gpt-4.1-nano",   # cheap & fast
+        model_name=config.TRIAGE_MODEL,
         openai_api_key=openai_api_key,
     )
 
