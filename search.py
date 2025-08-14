@@ -2,10 +2,9 @@ import faiss, numpy as np, pandas as pd
 from datetime import datetime
 import streamlit as st
 import config
-from config import INDEX_PATH, MAP_PATH, PAGES_PATH                            # your own config.py
+from config import INDEX_PATH, MAP_PATH, PAGES_PATH
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_openai import OpenAIEmbeddings
-from langchain_community.chat_models import ChatOpenAI  # If using ChatOpenAI
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain.schema import SystemMessage, HumanMessage, AIMessage
 from typing import Generator, List, Tuple, Dict, Any, Set, Iterator
 from collections import defaultdict
@@ -41,6 +40,7 @@ def initialize_search_index(openai_api_key: str | None = None):
     mapping   : pd.DataFrame  (index on vector_id)
     pages     : pd.DataFrame  (index on document ID)
     """
+    print("Loading embeding model...")
     # choose embedding backend
     if "text-embedding" in config.EMBEDDING_MODEL:
         embeddings = OpenAIEmbeddings(
@@ -51,7 +51,9 @@ def initialize_search_index(openai_api_key: str | None = None):
         embeddings = HuggingFaceEmbeddings(model_name=config.EMBEDDING_MODEL)
 
     # load artefacts
+    print("Loading FAISS index...")
     index   = faiss.read_index(INDEX_PATH)
+    print("Loading Parquet files..")
     mapping = pd.read_parquet(MAP_PATH).set_index("vector_id")
     pages   = pd.read_parquet(PAGES_PATH).set_index("ID")
 
@@ -84,7 +86,7 @@ def initialize_search_index(openai_api_key: str | None = None):
         int(y): grp["vector_id"].to_numpy(np.int64)
         for y, grp in tmp.groupby("year", sort=True)
     }
-
+    print("Successfully parsed Parquet files")
     return index, embeddings, mapping, pages, year2vec
 
 
@@ -333,10 +335,10 @@ def decide_rag(
         content=(
             "You are a routing controller. "
             "Analyse the user's latest message AND the recent conversation. "
-            "If the assistant can answer fully without consulting internal documents, "
+            "If the assistant can answer without consulting Transport & Environment's internal documents, "
             "return: {\"use_rag\": false, \"query\": \"\"}. "
 
-            "Otherwise, set use_rag to true and generate a precise, minimal search query "
+            "If the question is related to Transport & Environment's work (climate, vans, trucks, aviation, shipping, clean cities, decarbonisation, energy, biofuels, e-fuels, grids, batteries, co2, rail), set use_rag to true and generate a precise, minimal search query "
             f"(≤ {max_query_tokens} tokens) that would retrieve relevant documents. "
 
             "Disambiguate similar terms. For example, if the user mentions 'UCO', "
@@ -482,7 +484,7 @@ def chat_rag(
 
     # --- 1) router ----------------------------------------------------------
     use_rag, search_query = decide_rag(prompt, history, openai_api_key=openai_api_key)
-
+    
     # --- 2) retrieval if needed ---------------------------------------------
     if use_rag:
         docs = search_pdfs_cached(
@@ -610,7 +612,7 @@ def position_timeline(
 #
     triage_prompt = (
         "You are a policy analyst at Transport & Environment. "
-        "Given the snippets below, select **only** those that are somewhat related to T&E’s own *position or stance* on the topic "
+        "Given the snippets below, select **only** those that are somewhat related to Transport & Environment’s own *position or stance* on the topic "
         f"“{topic}”.\n\n"
         "Return a JSON list of the reference numbers that are relevant.\n\n"
         "Snippets:\n" + "\n\n".join(triage_chunks)
