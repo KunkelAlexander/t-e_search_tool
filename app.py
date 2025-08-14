@@ -58,13 +58,15 @@ with st.sidebar.expander("Settings"):
 
     # Dropdown for selecting OpenAI model
     model_options = [
-        "gpt-4o-mini",         #
-        "o4-mini",             #
-        "gpt-4.1-nano",        # 📊 Optimized for math, coding, and visual tasks
-        "gpt-4.1-mini",        # 🧠 Efficient STEM-focused reasoning
-        "gpt-4.1",             # 🧮 Advanced reasoning with visual input
-        "o3-mini",             #
+        "gpt-4o-mini",         
+        "o4-mini",    
+        "gpt-5-nano",
+        "gpt-4.1-nano",        
+        "gpt-4.1-mini",        
+        "gpt-4.1",             
+        "o3-mini",             
     ]
+
     st.selectbox("🤖 Choose OpenAI model", model_options, key="selected_model")
 
     st.slider("Relevancy of more recent results", 0.0, 0.5, value = 0.01, step=0.01, key="alpha")
