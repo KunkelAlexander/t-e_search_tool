@@ -4,7 +4,7 @@ import os
 EMBEDDING_MODEL      = "intfloat/multilingual-e5-small"
 SEARCH_RESULT_K      = 5
 
-DEFAULT_MODEL           = "gpt-5-nano"
+DEFAULT_MODEL           = "gpt-4o-mini"
 TRIAGE_MODEL            = "gpt-5-nano"
 TIMELINE_MODEL          = "o3-mini"
 
