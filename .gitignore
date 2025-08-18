@@ -10,3 +10,10 @@ hf_model_cache/models--sentence-transformers--all-mpnet-base-v2/
 embeddings/metadata_with_fulltext.csv
 deep_search.py
 .streamlit/secrets.toml
+embeddings - 2050814/faiss_mapping.parquet
+.gitignore
+embeddings - 2050814/metadata_with_fulltext.parquet
+embeddings - 2050814/multilingual-e5-small-faiss_mapping.parquet
+embeddings - 2050814/multilingual-e5-small-docs.index
+embeddings - 2050814/metadata_with_fulltext.csv
+embeddings - 2050814/docs.index

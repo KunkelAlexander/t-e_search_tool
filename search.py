@@ -335,10 +335,10 @@ def decide_rag(
         content=(
             "You are a routing controller. "
             "Analyse the user's latest message AND the recent conversation. "
-            "If the assistant can answer without consulting Transport & Environment's internal documents, "
+            "If the assistant can answer without consulting Transport & Environment's and Clean City Campaign's internal documents, "
             "return: {\"use_rag\": false, \"query\": \"\"}. "
 
-            "If the question is related to Transport & Environment's work (climate, vans, trucks, aviation, shipping, clean cities, decarbonisation, energy, biofuels, e-fuels, grids, batteries, co2, rail), set use_rag to true and generate a precise, minimal search query "
+            "If the question is related to Transport & Environment or Clean City Campaign's work (climate, cities, traffic, transport, vans, trucks, aviation, shipping, clean cities, decarbonisation, energy, biofuels, e-fuels, grids, batteries, co2, rail, green finance, etc.), set use_rag to true and generate a precise, minimal search query "
             f"(≤ {max_query_tokens} tokens) that would retrieve relevant documents. "
 
             "Disambiguate similar terms. For example, if the user mentions 'UCO', "
@@ -611,8 +611,8 @@ def position_timeline(
         )
 #
     triage_prompt = (
-        "You are a policy analyst at Transport & Environment. "
-        "Given the snippets below, select **only** those that are somewhat related to Transport & Environment’s own *position or stance* on the topic "
+        "You are a policy analyst at Transport & Environment/Clean City Campaign. "
+        "Given the snippets below, select **only** those that are somewhat related to Transport & Environment and Clean City Campaign’s own *position or stance* on the topic "
         f"“{topic}”.\n\n"
         "Return a JSON list of the reference numbers that are relevant.\n\n"
         "Snippets:\n" + "\n\n".join(triage_chunks)
